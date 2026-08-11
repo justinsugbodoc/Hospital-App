@@ -1,0 +1,8 @@
+{
+  "name": "SugboDoc Telehealth",
+  "description": "Telehealth and medical practice management platform for consultations, clinical records, and pharmacy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

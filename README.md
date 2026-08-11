@@ -1,11 +1,27 @@
-<div align="center">
+# Asset Master
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+https://github.com/justinsugbodoc/Asset-Manager.git
 
-  <h1>Built with AI Studio</h2>
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+can you clone this github repo
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+This project was built with [Lovable](https://lovable.dev).
 
-</div>
+## Build with Lovable
+
+Continue developing this project in the [Lovable editor](https://lovable.dev/projects/f1fbe1bf-0962-4661-9564-1f7c9dfcb2c4).
+
+- **Ship faster**: describe what you want to build and Lovable handles the code.
+- **Stay in sync**: every change made in Lovable is committed straight to this repository.
+- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+
+## Development
+
+Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+
+```sh
+git clone <this-repository-url>
+cd <repository-name>
+npm i
+npm run dev
+```
