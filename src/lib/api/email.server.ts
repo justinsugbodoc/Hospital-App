@@ -1,6 +1,4 @@
-// Ported from the original Express api-server `connectors/email-connector.ts`
-// and `templates/appointment-email.ts`. Uses the Resend HTTP API via `fetch`
-// instead of nodemailer/SMTP, since Node-only APIs are unavailable here.
+import nodemailer from "nodemailer";
 
 export type EmailResult = {
   success: boolean;
@@ -171,47 +169,119 @@ function encodeSubject(subject: string): string {
 }
 
 export async function sendAppointmentEmail(payload: AppointmentEmailPayload): Promise<EmailResult> {
-  const lovableKey = process.env["LOVABLE_API_KEY"];
-  const gmailKey = process.env["GOOGLE_MAIL_API_KEY"];
+  const subject = `SugboDoc Appointment Confirmation — ${payload.appointmentReference}`;
 
-  if (!lovableKey || !gmailKey) {
-    return { success: false, error: "Gmail is not connected yet. Link the Gmail connector to enable email." };
+  // 1. Check SMTP / Gmail Credentials (Nodemailer)
+  const rawUser = process.env["SMTP_USER"] || process.env["GMAIL_USER"] || "justin.sugbodoc@gmail.com";
+  const rawPass = process.env["SMTP_PASS"] || process.env["GMAIL_APP_PASSWORD"] || process.env["GMAIL_PASS"];
+  
+  const smtpUser = rawUser.trim();
+  const smtpPass = rawPass ? rawPass.replace(/\s+/g, "") : undefined;
+  const smtpHost = process.env["SMTP_HOST"] || "smtp.gmail.com";
+  const smtpPort = process.env["SMTP_PORT"] ? parseInt(process.env["SMTP_PORT"], 10) : 465;
+
+  if (smtpUser && smtpPass) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpPort === 465, // true for 465, false for 587/25
+        auth: {
+          user: smtpUser,
+          pass: smtpPass,
+        },
+      });
+
+      const info = await transporter.sendMail({
+        from: `"SugboDoc" <${smtpUser}>`,
+        to: payload.to,
+        subject,
+        html: payload.htmlBody,
+      });
+
+      return { success: true, messageId: info.messageId };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[SMTP/Gmail Send Error]:", message);
+      let errorMsg = `SMTP send failed: ${message}`;
+      if (message.includes("535") || message.includes("Invalid login") || message.includes("Username and Password not accepted")) {
+        errorMsg = "Gmail authentication failed (535). Make sure to use a 16-character Google App Password (from myaccount.google.com/apppasswords with 2-Step Verification enabled) instead of your normal account password, and set SMTP_USER to your Gmail address.";
+      }
+      return { success: false, error: errorMsg };
+    }
   }
 
-  const subject = `SugboDoc Appointment Confirmation — ${payload.appointmentReference}`;
-  const rfc2822 = [
-    `To: ${payload.to}`,
-    `Subject: ${encodeSubject(subject)}`,
-    "MIME-Version: 1.0",
-    'Content-Type: text/html; charset="UTF-8"',
-    "",
-    payload.htmlBody,
-  ].join("\r\n");
-
-  try {
-    const response = await fetch(
-      "https://connector-gateway.lovable.dev/google_mail/gmail/v1/users/me/messages/send",
-      {
+  // 2. Check Resend API Key
+  const resendKey = process.env["RESEND_API_KEY"];
+  if (resendKey) {
+    try {
+      const response = await fetch("https://api.resend.com/emails", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${lovableKey}`,
-          "X-Connection-Api-Key": gmailKey,
+          Authorization: `Bearer ${resendKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ raw: base64Url(new TextEncoder().encode(rfc2822)) }),
-      },
-    );
-
-    const bodyText = await response.text();
-    if (!response.ok) {
-      console.error(`[gmail send] failed [${response.status}]: ${bodyText}`);
-      return { success: false, error: `Gmail send failed [${response.status}]: ${bodyText}` };
+        body: JSON.stringify({
+          from: "SugboDoc <onboarding@resend.dev>",
+          to: [payload.to],
+          subject,
+          html: payload.htmlBody,
+        }),
+      });
+      const resData = await response.json();
+      if (!response.ok) {
+        return { success: false, error: `Resend error: ${JSON.stringify(resData)}` };
+      }
+      return { success: true, messageId: resData.id };
+    } catch (err) {
+      return { success: false, error: `Resend send failed: ${err instanceof Error ? err.message : String(err)}` };
     }
-    const result = JSON.parse(bodyText || "{}") as { id?: string };
-    return { success: true, messageId: result.id };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown email error";
-    return { success: false, error: message };
   }
+
+  // 3. Check Lovable Connector Gateway
+  const lovableKey = process.env["LOVABLE_API_KEY"];
+  const gmailKey = process.env["GOOGLE_MAIL_API_KEY"];
+  if (lovableKey && gmailKey) {
+    const rfc2822 = [
+      `To: ${payload.to}`,
+      `Subject: ${encodeSubject(subject)}`,
+      "MIME-Version: 1.0",
+      'Content-Type: text/html; charset="UTF-8"',
+      "",
+      payload.htmlBody,
+    ].join("\r\n");
+
+    try {
+      const response = await fetch(
+        "https://connector-gateway.lovable.dev/google_mail/gmail/v1/users/me/messages/send",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${lovableKey}`,
+            "X-Connection-Api-Key": gmailKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ raw: base64Url(new TextEncoder().encode(rfc2822)) }),
+        },
+      );
+
+      const bodyText = await response.text();
+      if (!response.ok) {
+        console.error(`[gmail send] failed [${response.status}]: ${bodyText}`);
+        return { success: false, error: `Gmail send failed [${response.status}]: ${bodyText}` };
+      }
+      const result = JSON.parse(bodyText || "{}") as { id?: string };
+      return { success: true, messageId: result.id };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown email error";
+      return { success: false, error: message };
+    }
+  }
+
+  return {
+    success: false,
+    error: "Email sending is not configured. Please set SMTP_USER and SMTP_PASS (or GMAIL_USER and GMAIL_APP_PASSWORD) in your environment settings.",
+  };
 }
+
 
