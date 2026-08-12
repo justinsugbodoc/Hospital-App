@@ -180,6 +180,7 @@ export type ServerMessage = {
 
 export type ServerMessageConversation = {
   id: string;
+  type?: 'admin' | 'doctor';
   patientId: string;
   patientName: string;
   patientInitials: string;

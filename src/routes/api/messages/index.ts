@@ -13,32 +13,56 @@ export const Route = createFileRoute("/api/messages/")({
         const user = await getUserFromRequest(request);
         if (!user) return errorJson("Not signed in.", 401);
 
-        const allPatientsData = await db
-          .select({
-            id: sugbodocUsers.id,
-            name: sugbodocUsers.name,
-            initials: sugbodocUsers.initials,
-            email: sugbodocUsers.email,
-          })
-          .from(sugbodocUsers)
-          .where(eq(sugbodocUsers.role, "Patient"));
+        const conversations = [];
 
-        let patients: typeof allPatientsData;
         if (isAdminUser(user)) {
-          patients = allPatientsData;
+          const allPatientsData = await db
+            .select({
+              id: sugbodocUsers.id,
+              name: sugbodocUsers.name,
+              initials: sugbodocUsers.initials,
+              email: sugbodocUsers.email,
+            })
+            .from(sugbodocUsers)
+            .where(eq(sugbodocUsers.role, "Patient"));
+
+          for (const patient of allPatientsData) {
+            const conversation = await ensureConversation(patient.id, "admin");
+            conversations.push({ conversation, patient });
+          }
         } else if (isDoctorUser(user)) {
+          const allPatientsData = await db
+            .select({
+              id: sugbodocUsers.id,
+              name: sugbodocUsers.name,
+              initials: sugbodocUsers.initials,
+              email: sugbodocUsers.email,
+            })
+            .from(sugbodocUsers)
+            .where(eq(sugbodocUsers.role, "Patient"));
+
           const filtered = await Promise.all(
             allPatientsData.map(async (patient) => ((await doctorCanAccessPatient(user, patient.id)) ? patient : null)),
           );
-          patients = filtered.filter((p): p is typeof allPatientsData[number] => Boolean(p));
-        } else {
-          patients = [{ id: user.id, name: user.name, initials: user.initials, email: user.email }];
-        }
+          const assignedPatients = filtered.filter((p): p is typeof allPatientsData[number] => Boolean(p));
 
-        const conversations = [];
-        for (const patient of patients) {
-          const conversation = await ensureConversation(patient.id);
-          conversations.push({ conversation, patient });
+          for (const patient of assignedPatients) {
+            const conversation = await ensureConversation(patient.id, "doctor");
+            conversations.push({ conversation, patient });
+          }
+        } else {
+          // Patient user
+          const adminConv = await ensureConversation(user.id, "admin");
+          conversations.push({
+            conversation: adminConv,
+            patient: { id: user.id, name: user.name, initials: user.initials, email: user.email },
+          });
+
+          const doctorConv = await ensureConversation(user.id, "doctor");
+          conversations.push({
+            conversation: doctorConv,
+            patient: { id: user.id, name: user.name, initials: user.initials, email: user.email },
+          });
         }
 
         const allMessagesData = await db
@@ -72,6 +96,7 @@ export const Route = createFileRoute("/api/messages/")({
             const latest = threadMessages[0];
             return {
               id: conversation.id,
+              type: conversation.type,
               patientId: patient.id,
               patientName: patient.name,
               patientInitials: patient.initials,

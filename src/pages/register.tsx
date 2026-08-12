@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLocation, Link } from 'wouter';
 import { useAuth, STORAGE_KEYS } from '@/hooks/use-auth';
-import { Loader2, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
+import { Loader2, Eye, EyeOff, CheckCircle2, ArrowLeft } from 'lucide-react';
 import Logo from '@/components/brand/logo';
 import { serverRegister } from '@/lib/server';
 
@@ -117,7 +117,17 @@ export default function Register() {
       <div className="absolute top-0 left-0 w-[500px] h-[500px] bg-primary/5 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2 pointer-events-none" />
       <div className="absolute bottom-0 right-0 w-[400px] h-[400px] bg-secondary/5 rounded-full blur-3xl translate-x-1/3 translate-y-1/3 pointer-events-none" />
 
-      <div className="w-full max-w-[440px] bg-card rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-none border border-border p-8 relative z-10 my-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="w-full max-w-[440px] relative z-10 mb-3 flex items-center justify-between">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors group px-1 py-1"
+        >
+          <ArrowLeft className="h-3.5 w-3.5 transition-transform group-hover:-translate-x-1" />
+          Back to Landing Page
+        </Link>
+      </div>
+
+      <div className="w-full max-w-[440px] bg-card rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-none border border-border p-8 relative z-10 my-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <div className="text-center mb-8">
           <Logo className="justify-center" />
           <p className="text-sm text-muted-foreground mt-2">Create your patient account</p>
@@ -243,10 +253,15 @@ export default function Register() {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
+        <div className="mt-6 text-center space-y-2">
           <p className="text-sm text-muted-foreground">
             Already have an account?{' '}
             <Link href="/login" className="text-primary font-medium hover:underline">Sign In</Link>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            <Link href="/" className="hover:text-foreground transition-colors underline underline-offset-4">
+              Return to main website
+            </Link>
           </p>
         </div>
       </div>

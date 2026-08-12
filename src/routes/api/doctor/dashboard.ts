@@ -48,9 +48,15 @@ export const Route = createFileRoute("/api/doctor/dashboard")({
         const assignedPatientIds = new Set(assignedPatients.map((patient) => patient.id));
 
         const conversationRowsData = await db.select().from(sugbodocMessageConversations);
-        const conversations = conversationRowsData.map((c) => ({ id: c.id, patient_id: c.patientId }));
+        const conversations = conversationRowsData.map((c) => ({
+          id: c.id,
+          patient_id: c.patientId,
+          type: c.type || (c.id.includes("doctor") ? "doctor" : "admin"),
+        }));
         const assignedConversationIds = new Set(
-          conversations.filter((conversation) => assignedPatientIds.has(conversation.patient_id)).map((conversation) => conversation.id),
+          conversations
+            .filter((conversation) => assignedPatientIds.has(conversation.patient_id) && conversation.type === "doctor")
+            .map((conversation) => conversation.id),
         );
 
         const messageRowsData = await db.select().from(sugbodocMessages);

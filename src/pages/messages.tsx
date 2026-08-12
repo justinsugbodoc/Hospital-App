@@ -30,11 +30,27 @@ export default function Messages() {
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
   const activeThread = threads.find(thread => thread.id === activeThreadId) ?? null;
   const isPatient = session?.role === 'Patient';
-  const getThreadDisplay = (thread: ServerMessageConversation) => ({
-    name: isPatient ? 'SugboDoc Admin' : thread.patientName,
-    initials: isPatient ? 'SD' : thread.patientInitials,
-    detail: isPatient ? 'SugboDoc care team' : thread.patientEmail,
-  });
+  const getThreadDisplay = (thread: ServerMessageConversation) => {
+    if (isPatient) {
+      if (thread.type === 'doctor') {
+        return {
+          name: 'Doctor & Care Team',
+          initials: 'DR',
+          detail: 'Clinical questions & medical follow-ups',
+        };
+      }
+      return {
+        name: 'SugboDoc Admin',
+        initials: 'SD',
+        detail: 'Billing, appointments & support',
+      };
+    }
+    return {
+      name: thread.patientName,
+      initials: thread.patientInitials,
+      detail: thread.patientEmail,
+    };
+  };
   const filteredThreads = useMemo(
     () => threads.filter(thread => {
       const display = getThreadDisplay(thread);

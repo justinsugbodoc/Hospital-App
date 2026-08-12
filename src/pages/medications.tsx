@@ -250,33 +250,31 @@ export default function Medications() {
     isFulfillmentValid;
 
   const addToCart = (med: any) => {
-    setCartItems(current => {
-      const existing = current.find(item => item.id === med.id);
-      if (existing) {
-        if (existing.quantity >= med.stock) {
-          toast({ title: 'Stock limit reached', description: `Only ${med.stock} available.`, variant: 'destructive' });
-          return current;
-        }
-        toast({ title: 'Cart updated', description: `Increased ${med.name} quantity.` });
-        return current.map(item => item.id === med.id ? { ...item, quantity: item.quantity + 1 } : item);
+    const existing = cartItems.find(item => item.id === med.id);
+    if (existing) {
+      if (existing.quantity >= med.stock) {
+        toast({ title: 'Stock limit reached', description: `Only ${med.stock} available.`, variant: 'destructive' });
+        return;
       }
+      toast({ title: 'Cart updated', description: `Increased ${med.name} quantity.` });
+      setCartItems(current => current.map(item => item.id === med.id ? { ...item, quantity: item.quantity + 1 } : item));
+    } else {
       toast({ title: 'Added to cart', description: `${med.name} added to your cart.` });
-      return [...current, { ...med, quantity: 1 }];
-    });
+      setCartItems(current => [...current, { ...med, quantity: 1 }]);
+    }
   };
 
   const updateQuantity = (id: string, newQuantity: number) => {
-    setCartItems(current => {
-      if (newQuantity <= 0) {
-        return current.filter(item => item.id !== id);
-      }
-      const med = catalog.find(m => m.id === id);
-      if (med && newQuantity > med.stock) {
-        toast({ title: 'Stock limit reached', description: `Only ${med.stock} available.`, variant: 'destructive' });
-        return current;
-      }
-      return current.map(item => item.id === id ? { ...item, quantity: newQuantity } : item);
-    });
+    if (newQuantity <= 0) {
+      setCartItems(current => current.filter(item => item.id !== id));
+      return;
+    }
+    const med = catalog.find(m => m.id === id);
+    if (med && newQuantity > med.stock) {
+      toast({ title: 'Stock limit reached', description: `Only ${med.stock} available.`, variant: 'destructive' });
+      return;
+    }
+    setCartItems(current => current.map(item => item.id === id ? { ...item, quantity: newQuantity } : item));
   };
 
   const handleCheckout = async () => {

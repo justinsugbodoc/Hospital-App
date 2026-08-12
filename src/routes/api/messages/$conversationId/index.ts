@@ -62,6 +62,7 @@ export const Route = createFileRoute("/api/messages/$conversationId/")({
         return json({
           conversation: {
             id: conversation.id,
+            type: conversation.type,
             patientId: patient?.id ?? conversation.patient_id,
             patientName: patient?.name ?? "Patient",
             patientInitials: patient?.initials ?? "PT",

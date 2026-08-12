@@ -148,7 +148,8 @@ export const sugbodocAuditEvents = pgTable("sugbodoc_audit_events", {
 
 export const sugbodocMessageConversations = pgTable("sugbodoc_message_conversations", {
   id: text("id").primaryKey(),
-  patientId: text("patient_id").notNull().unique().references(() => sugbodocUsers.id, { onDelete: "cascade" }),
+  patientId: text("patient_id").notNull().references(() => sugbodocUsers.id, { onDelete: "cascade" }),
+  type: text("type").notNull().default("admin"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
