@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
+import { Link } from '@tanstack/react-router';
 import AppShell from '@/components/layout/app-shell';
 import { specialties, doctors } from '@/data/mock';
-import { Calendar as CalendarIcon, Clock, MapPin, User, ChevronLeft, ChevronRight, Check, Loader2 } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, MapPin, User, ChevronLeft, ChevronRight, Check, Loader2, MessageSquare } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { calculateInsuranceEstimate, createOrUpdateClaim } from '@/lib/insurance';
 import { getCurrentSessionUser } from '@/hooks/use-auth';
@@ -221,11 +222,10 @@ export default function Appointments() {
     setIsConfirming(false);
     resetBooking();
 
-    // 4. Show the email result.
+    // 4. Show the booking and message connection result.
     toast({
-      title: 'Appointment Booked',
-      description: `Reference: ${reference}. Email: ${emailSent ? 'sent' : `not sent${emailError ? ` (${emailError})` : ''}`}.`,
-      variant: emailSent ? undefined : 'destructive',
+      title: 'Appointment Booked & Doctor Connected',
+      description: `Reference: ${reference}. A direct message thread with ${selectedDoctor.name} has been opened.`,
     });
   };
 
@@ -339,6 +339,14 @@ export default function Appointments() {
 
                 {activeTab === 'upcoming' && (
                   <div className="flex md:flex-col gap-2 shrink-0 md:w-32 mt-2 md:mt-0 pt-4 md:pt-0 border-t md:border-t-0 border-border">
+                    <Link
+                      to="/messages"
+                      search={{ doctor: (apt.doctor as any)?.id || (apt.doctor as any)?.providerId || 'dr_1' } as any}
+                      className="flex-1 bg-primary/10 text-primary text-xs font-semibold py-2 px-3 rounded-lg hover:bg-primary/20 transition-colors flex items-center justify-center gap-1.5"
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      Message
+                    </Link>
                     <button className="flex-1 bg-secondary text-secondary-foreground text-xs font-medium py-2 px-3 rounded-lg hover:bg-secondary/90 transition-colors">
                       Reschedule
                     </button>

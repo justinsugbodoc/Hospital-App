@@ -90,7 +90,26 @@ export default function Messages() {
     try {
       const response = await serverMessageConversations();
       setThreads(response.conversations);
-      if (!activeThreadId && response.conversations[0]) {
+
+      const searchParams = new URLSearchParams(window.location.search);
+      const threadParam = searchParams.get('thread');
+      const doctorParam = searchParams.get('doctor');
+
+      if (threadParam && response.conversations.some((c) => c.id === threadParam)) {
+        setActiveThreadId(threadParam);
+      } else if (doctorParam) {
+        const normDoc = doctorParam.replace('doctor_', '');
+        const found = response.conversations.find((c) =>
+          c.doctorId === normDoc ||
+          c.doctorId === `doctor_${normDoc}` ||
+          c.id.includes(`_${normDoc}_`)
+        );
+        if (found) {
+          setActiveThreadId(found.id);
+        } else if (!activeThreadId && response.conversations[0]) {
+          setActiveThreadId(response.conversations[0].id);
+        }
+      } else if (!activeThreadId && response.conversations[0]) {
         setActiveThreadId(response.conversations[0].id);
       }
       setError('');

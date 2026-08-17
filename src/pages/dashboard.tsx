@@ -217,6 +217,13 @@ export default function Dashboard() {
                           </div>
                         </div>
                       </div>
+                      <Link
+                        href={`/messages?doctor=${(doctorObj as any).id || (doctorObj as any).providerId || 'dr_1'}`}
+                        className="self-start sm:self-center px-3 py-1.5 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        Message Doctor
+                      </Link>
                     </div>
                   );
                   })}

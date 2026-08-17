@@ -98,6 +98,70 @@ export async function ensureDoctorConversation(patientId: string, doctorId: stri
   return ensureConversation(patientId, "doctor", doctorId);
 }
 
+export async function connectAppointmentMessageThread(params: {
+  patientId: string;
+  patientName?: string;
+  doctorId: string;
+  doctorName?: string;
+  specialty?: string;
+  clinic?: string;
+  appointmentReference?: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
+}): Promise<ConversationRow> {
+  const normDoctorId = params.doctorId.replace("doctor_", "");
+  const conversation = await ensureConversation(params.patientId, "doctor", normDoctorId);
+
+  // Send an automatic appointment booking notification / connecting message into this thread from the doctor
+  const docSenderId = `doctor_${normDoctorId}`;
+  const patientDisplay = params.patientName || "there";
+  const doctorDisplay = params.doctorName || `Dr. ${normDoctorId}`;
+  const refText = params.appointmentReference ? ` (Ref: ${params.appointmentReference})` : "";
+  const dateText = params.appointmentDate ? ` on ${params.appointmentDate}` : "";
+  const timeText = params.appointmentTime ? ` at ${params.appointmentTime}` : "";
+  const specialtyText = params.specialty ? ` for ${params.specialty}` : "";
+  const clinicText = params.clinic ? ` at ${params.clinic}` : "";
+
+  const welcomeBody = `Hello ${patientDisplay}! Your appointment${specialtyText}${clinicText}${dateText}${timeText}${refText} has been scheduled.\n\nThis direct care channel is open between you and ${doctorDisplay}. Feel free to message here for preliminary notes, consultation inquiries, or preparation questions.`;
+
+  const msgId = `msg_appt_${newId()}`;
+  const now = new Date();
+  const messageRow: MessageRow = {
+    id: msgId,
+    conversation_id: conversation.id,
+    sender_id: docSenderId,
+    body: welcomeBody,
+    read_at: null,
+    created_at: now.toISOString(),
+  };
+
+  // Write to memory
+  memoryMessages.set(msgId, messageRow);
+
+  // Update conversation updatedAt
+  conversation.updated_at = now.toISOString();
+  memoryConversations.set(conversation.id, conversation);
+
+  try {
+    await db.insert(sugbodocMessages).values({
+      id: msgId,
+      conversationId: conversation.id,
+      senderId: docSenderId,
+      body: welcomeBody,
+      readAt: null,
+      createdAt: now,
+    });
+    await db
+      .update(sugbodocMessageConversations)
+      .set({ updatedAt: now })
+      .where(eq(sugbodocMessageConversations.id, conversation.id));
+  } catch (error) {
+    console.warn("[connectAppointmentMessageThread] DB insert fallback to memory:", error);
+  }
+
+  return conversation;
+}
+
 export async function canAccessConversation(user: AuthUser, conversationId: string): Promise<ConversationRow | null> {
   // Check memory store
   let row = memoryConversations.get(conversationId);

@@ -119,9 +119,11 @@ export const Route = createFileRoute("/api/messages/")({
           };
 
           // Find appointments assigned to this doctor
+          const normDoctorProviderId = doctorProviderId.replace("doctor_", "");
           const doctorAppts = allAppointments.filter((a) => {
             const doc = a.data?.doctor;
-            return doc?.id === doctorProviderId || doc?.providerId === doctorProviderId;
+            const dId = String(doc?.providerId || doc?.id || (a.data as any)?.doctorId || "").replace("doctor_", "");
+            return dId === normDoctorProviderId;
           });
 
           const assignedPatientIds = new Set<string>();
@@ -157,9 +159,9 @@ export const Route = createFileRoute("/api/messages/")({
               email: "juan@example.com",
             };
 
-            const conversation = await ensureConversation(patient.id, "doctor", doctorProviderId);
+            const conversation = await ensureConversation(patient.id, "doctor", normDoctorProviderId);
             const latestAppt = doctorAppts.find((a) => a.userId === patient.id);
-            const latestEnc = allEncounters.find((e) => e.patientId === patient.id && (e.data?.doctorId === doctorProviderId || e.appointmentId === latestAppt?.id));
+            const latestEnc = allEncounters.find((e) => e.patientId === patient.id && (String(e.data?.doctorId || "").replace("doctor_", "") === normDoctorProviderId || e.appointmentId === latestAppt?.id));
 
             conversations.push({
               conversation,
@@ -181,11 +183,25 @@ export const Route = createFileRoute("/api/messages/")({
           const patientAppts = allAppointments.filter((a) => a.userId === user.id);
           const bookedDoctorIds = new Set<string>();
           for (const appt of patientAppts) {
-            const docId = appt.data?.doctor?.id || appt.data?.doctor?.providerId;
-            if (docId) bookedDoctorIds.add(docId);
+            const doc = appt.data?.doctor;
+            const docId = doc?.providerId || doc?.id || (appt.data as any)?.doctorId;
+            if (docId) {
+              const cleanId = String(docId).replace("doctor_", "");
+              bookedDoctorIds.add(cleanId);
+              if (!doctorMap.has(cleanId) && doc?.name) {
+                doctorMap.set(cleanId, {
+                  id: `doctor_${cleanId}`,
+                  providerId: cleanId,
+                  name: doc.name,
+                  initials: doc.initials || doc.name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase(),
+                  specialty: doc.specialty || "Specialist",
+                  clinic: doc.clinic || "Clinic",
+                });
+              }
+            }
           }
 
-          // Always ensure the 3 mock doctors are available for patient messaging if demo patient
+          // Always ensure the mock doctors are available for patient messaging if demo patient
           if (bookedDoctorIds.size === 0 || user.id === "pt_123" || user.email === "juan@example.com") {
             bookedDoctorIds.add("dr_2"); // Dr. Jose Reyes
             bookedDoctorIds.add("dr_1"); // Dr. Maria Santos
@@ -196,15 +212,19 @@ export const Route = createFileRoute("/api/messages/")({
             const docInfo = doctorMap.get(docId) ?? {
               id: `doctor_${docId}`,
               providerId: docId,
-              name: docId === "dr_1" ? "Dr. Maria Santos" : docId === "dr_2" ? "Dr. Jose Reyes" : docId === "dr_3" ? "Dr. Ana Villanueva" : "Doctor",
-              initials: docId === "dr_1" ? "MS" : docId === "dr_2" ? "JR" : docId === "dr_3" ? "AV" : "DR",
-              specialty: docId === "dr_1" ? "Internal Medicine" : docId === "dr_2" ? "Cardiology" : docId === "dr_3" ? "OB-GYN" : "Specialist",
-              clinic: docId === "dr_1" ? "Cebu Doctors' University Hospital" : docId === "dr_2" ? "Chong Hua Hospital" : docId === "dr_3" ? "Perpetual Succour Hospital" : "Clinic",
+              name: docId === "dr_1" ? "Dr. Maria Santos" : docId === "dr_2" ? "Dr. Jose Reyes" : docId === "dr_3" ? "Dr. Ana Villanueva" : docId === "dr_4" ? "Dr. Carlo Mendoza" : docId === "dr_5" ? "Dr. Lea Fernandez" : "Doctor",
+              initials: docId === "dr_1" ? "MS" : docId === "dr_2" ? "JR" : docId === "dr_3" ? "AV" : docId === "dr_4" ? "CM" : docId === "dr_5" ? "LF" : "DR",
+              specialty: docId === "dr_1" ? "Internal Medicine" : docId === "dr_2" ? "Cardiology" : docId === "dr_3" ? "OB-GYN" : docId === "dr_4" ? "Dermatology" : docId === "dr_5" ? "Pediatrics" : "Specialist",
+              clinic: docId === "dr_1" ? "Cebu Doctors' University Hospital" : docId === "dr_2" ? "Chong Hua Hospital" : docId === "dr_3" ? "Perpetual Succour Hospital" : docId === "dr_4" ? "Vicente Sotto Memorial Medical Center" : docId === "dr_5" ? "Cebu Doctors' University Hospital" : "Clinic",
             };
 
             const docConv = await ensureConversation(user.id, "doctor", docId);
-            const latestAppt = patientAppts.find((a) => (a.data?.doctor?.id === docId || a.data?.doctor?.providerId === docId));
-            const latestEnc = allEncounters.find((e) => e.patientId === user.id && (e.data?.doctorId === docId || e.appointmentId === latestAppt?.id));
+            const latestAppt = patientAppts.find((a) => {
+              const d = a.data?.doctor;
+              const dId = String(d?.providerId || d?.id || (a.data as any)?.doctorId || "").replace("doctor_", "");
+              return dId === docId;
+            });
+            const latestEnc = allEncounters.find((e) => e.patientId === user.id && (String(e.data?.doctorId || "").replace("doctor_", "") === docId || e.appointmentId === latestAppt?.id));
 
             conversations.push({
               conversation: docConv,
@@ -262,6 +282,8 @@ export const Route = createFileRoute("/api/messages/")({
         senderMap.set("doctor_dr_2", { id: "doctor_dr_2", name: "Dr. Jose Reyes", initials: "JR", role: "Doctor" });
         senderMap.set("doctor_dr_1", { id: "doctor_dr_1", name: "Dr. Maria Santos", initials: "MS", role: "Doctor" });
         senderMap.set("doctor_dr_3", { id: "doctor_dr_3", name: "Dr. Ana Villanueva", initials: "AV", role: "Doctor" });
+        senderMap.set("doctor_dr_4", { id: "doctor_dr_4", name: "Dr. Carlo Mendoza", initials: "CM", role: "Doctor" });
+        senderMap.set("doctor_dr_5", { id: "doctor_dr_5", name: "Dr. Lea Fernandez", initials: "LF", role: "Doctor" });
         senderMap.set("usr_admin_default", { id: "usr_admin_default", name: "SugboDoc Administrator", initials: "SA", role: "Admin" });
         senderMap.set("pt_123", { id: "pt_123", name: "Juan dela Cruz", initials: "JD", role: "Patient" });
 

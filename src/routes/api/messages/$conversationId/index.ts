@@ -68,6 +68,8 @@ export const Route = createFileRoute("/api/messages/$conversationId/")({
         senderMap.set("doctor_dr_2", { id: "doctor_dr_2", name: "Dr. Jose Reyes", initials: "JR", role: "Doctor" });
         senderMap.set("doctor_dr_1", { id: "doctor_dr_1", name: "Dr. Maria Santos", initials: "MS", role: "Doctor" });
         senderMap.set("doctor_dr_3", { id: "doctor_dr_3", name: "Dr. Ana Villanueva", initials: "AV", role: "Doctor" });
+        senderMap.set("doctor_dr_4", { id: "doctor_dr_4", name: "Dr. Carlo Mendoza", initials: "CM", role: "Doctor" });
+        senderMap.set("doctor_dr_5", { id: "doctor_dr_5", name: "Dr. Lea Fernandez", initials: "LF", role: "Doctor" });
         senderMap.set("usr_admin_default", { id: "usr_admin_default", name: "SugboDoc Administrator", initials: "SA", role: "Admin" });
         senderMap.set("pt_123", { id: "pt_123", name: "Juan dela Cruz", initials: "JD", role: "Patient" });
 
