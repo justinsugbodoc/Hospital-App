@@ -87,6 +87,38 @@ export type PharmacyMedicationRow = {
   updated_at?: string;
 };
 
+declare global {
+  var _memoryPharmacyMedications: Map<string, PharmacyMedicationRow> | undefined;
+  var _memoryPharmacyOrders: Map<string, PharmacyOrderRow> | undefined;
+}
+
+export const memoryPharmacyMedications = (globalThis._memoryPharmacyMedications =
+  globalThis._memoryPharmacyMedications || new Map<string, PharmacyMedicationRow>());
+export const memoryPharmacyOrders = (globalThis._memoryPharmacyOrders =
+  globalThis._memoryPharmacyOrders || new Map<string, PharmacyOrderRow>());
+
+function initMemoryMedications() {
+  if (memoryPharmacyMedications.size > 0) return;
+  for (const [id, name, description, genericName, dosage, form, category, price, stock] of defaultCatalog) {
+    memoryPharmacyMedications.set(id, {
+      id,
+      name,
+      description,
+      generic_name: genericName,
+      dosage,
+      dosage_form: form,
+      form,
+      category,
+      price: String(price),
+      stock,
+      enabled: stock > 0 ? "true" : "false",
+      partner_locations: ["Sugbo Pharmacy Escario", "Chong Hua Hospital Pharmacy"],
+      updated_at: new Date().toISOString(),
+    });
+  }
+}
+initMemoryMedications();
+
 export function publicMedication(row: PharmacyMedicationRow) {
   return {
     id: row.id,
@@ -138,50 +170,45 @@ export async function ensurePharmacyFinancialRecords(
   const billId = order.bill_id ?? pharmacyBillId(order.reference);
   const amount = Number(payment.amount.toFixed(2));
 
-  await db
-    .insert(sugbodocPharmacyBills)
-    .values({
-      id: billId,
-      patientId: order.patient_id,
-      orderReference: order.reference,
-      description: `Pharmacy order ${order.reference}`,
-      amount: amount.toFixed(2),
-      status: "Paid",
-      billDate: new Date(order.created_at),
-      paidAt: payment.paidAt,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: sugbodocPharmacyBills.id,
-      set: {
+  // Update in memory
+  const mem = memoryPharmacyOrders.get(order.reference);
+  if (mem) {
+    mem.bill_id = billId;
+    mem.data = { ...mem.data, billId, paymentReference: payment.reference, paymentDate: payment.paidAt.toISOString() };
+    mem.updated_at = new Date().toISOString();
+  }
+
+  try {
+    await db
+      .insert(sugbodocPharmacyBills)
+      .values({
+        id: billId,
         patientId: order.patient_id,
         orderReference: order.reference,
         description: `Pharmacy order ${order.reference}`,
         amount: amount.toFixed(2),
         status: "Paid",
+        billDate: new Date(order.created_at),
         paidAt: payment.paidAt,
         updatedAt: new Date(),
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: sugbodocPharmacyBills.id,
+        set: {
+          patientId: order.patient_id,
+          orderReference: order.reference,
+          description: `Pharmacy order ${order.reference}`,
+          amount: amount.toFixed(2),
+          status: "Paid",
+          paidAt: payment.paidAt,
+          updatedAt: new Date(),
+        },
+      });
 
-  await db
-    .insert(sugbodocPharmacyPayments)
-    .values({
-      id: pharmacyPaymentId(order.reference),
-      patientId: order.patient_id,
-      orderReference: order.reference,
-      billId: billId,
-      amount: amount.toFixed(2),
-      status: "Paid",
-      paymentDate: payment.paidAt,
-      reference: payment.reference,
-      stripeSessionId: payment.stripeSessionId,
-      fulfillmentStatus: order.status,
-      updatedAt: new Date(),
-    })
-    .onConflictDoUpdate({
-      target: sugbodocPharmacyPayments.id,
-      set: {
+    await db
+      .insert(sugbodocPharmacyPayments)
+      .values({
+        id: pharmacyPaymentId(order.reference),
         patientId: order.patient_id,
         orderReference: order.reference,
         billId: billId,
@@ -192,29 +219,93 @@ export async function ensurePharmacyFinancialRecords(
         stripeSessionId: payment.stripeSessionId,
         fulfillmentStatus: order.status,
         updatedAt: new Date(),
-      },
-    });
+      })
+      .onConflictDoUpdate({
+        target: sugbodocPharmacyPayments.id,
+        set: {
+          patientId: order.patient_id,
+          orderReference: order.reference,
+          billId: billId,
+          amount: amount.toFixed(2),
+          status: "Paid",
+          paymentDate: payment.paidAt,
+          reference: payment.reference,
+          stripeSessionId: payment.stripeSessionId,
+          fulfillmentStatus: order.status,
+          updatedAt: new Date(),
+        },
+      });
 
-  await db
-    .update(sugbodocPharmacyOrders)
-    .set({
-      billId: billId,
-      data: { ...orderData, billId, paymentReference: payment.reference, paymentDate: payment.paidAt.toISOString() },
-      updatedAt: new Date(),
-    })
-    .where(eq(sugbodocPharmacyOrders.reference, order.reference));
+    await db
+      .update(sugbodocPharmacyOrders)
+      .set({
+        billId: billId,
+        data: { ...orderData, billId, paymentReference: payment.reference, paymentDate: payment.paidAt.toISOString() },
+        updatedAt: new Date(),
+      })
+      .where(eq(sugbodocPharmacyOrders.reference, order.reference));
+  } catch (err) {
+    console.warn("[ensurePharmacyFinancialRecords] SQL fallback to memory:", err);
+  }
 
   return billId;
 }
 
 export async function ensureCatalog(): Promise<PharmacyMedicationRow[]> {
-  const existing = await db
-    .select()
-    .from(sugbodocPharmacyMedications)
-    .orderBy(asc(sugbodocPharmacyMedications.name));
+  initMemoryMedications();
+  try {
+    const existing = await db
+      .select()
+      .from(sugbodocPharmacyMedications)
+      .orderBy(asc(sugbodocPharmacyMedications.name));
 
-  if (existing.length > 0) {
-    return existing.map((r) => ({
+    if (existing.length > 0) {
+      const rows = existing.map((r) => ({
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        generic_name: r.genericName,
+        dosage: r.dosage,
+        dosage_form: r.dosageForm,
+        form: r.form,
+        category: r.category,
+        price: r.price,
+        stock: r.stock,
+        enabled: r.enabled,
+        partner_locations: r.partnerLocations as string[],
+        updated_at: r.updatedAt.toISOString(),
+      }));
+      for (const row of rows) {
+        memoryPharmacyMedications.set(row.id, row);
+      }
+      return rows;
+    }
+
+    for (const [id, name, description, genericName, dosage, form, category, price, stock] of defaultCatalog) {
+      await db
+        .insert(sugbodocPharmacyMedications)
+        .values({
+          id,
+          name,
+          description,
+          genericName: genericName,
+          dosage,
+          dosageForm: form,
+          form,
+          category,
+          price: String(price),
+          stock,
+          enabled: stock > 0 ? "true" : "false",
+          partnerLocations: ["Sugbo Pharmacy Escario", "Chong Hua Hospital Pharmacy"],
+        });
+    }
+
+    const seeded = await db
+      .select()
+      .from(sugbodocPharmacyMedications)
+      .orderBy(asc(sugbodocPharmacyMedications.name));
+
+    const seededRows = seeded.map((r) => ({
       id: r.id,
       name: r.name,
       description: r.description,
@@ -229,47 +320,14 @@ export async function ensureCatalog(): Promise<PharmacyMedicationRow[]> {
       partner_locations: r.partnerLocations as string[],
       updated_at: r.updatedAt.toISOString(),
     }));
+    for (const row of seededRows) {
+      memoryPharmacyMedications.set(row.id, row);
+    }
+    return seededRows;
+  } catch (err) {
+    console.warn("[ensureCatalog] SQL fallback to memory:", err);
+    return Array.from(memoryPharmacyMedications.values());
   }
-
-  for (const [id, name, description, genericName, dosage, form, category, price, stock] of defaultCatalog) {
-    await db
-      .insert(sugbodocPharmacyMedications)
-      .values({
-        id,
-        name,
-        description,
-        genericName: genericName,
-        dosage,
-        dosageForm: form,
-        form,
-        category,
-        price: String(price),
-        stock,
-        enabled: stock > 0 ? "true" : "false",
-        partnerLocations: ["Sugbo Pharmacy Escario", "Chong Hua Hospital Pharmacy"],
-      });
-  }
-
-  const seeded = await db
-    .select()
-    .from(sugbodocPharmacyMedications)
-    .orderBy(asc(sugbodocPharmacyMedications.name));
-
-  return seeded.map((r) => ({
-    id: r.id,
-    name: r.name,
-    description: r.description,
-    generic_name: r.genericName,
-    dosage: r.dosage,
-    dosage_form: r.dosageForm,
-    form: r.form,
-    category: r.category,
-    price: r.price,
-    stock: r.stock,
-    enabled: r.enabled,
-    partner_locations: r.partnerLocations as string[],
-    updated_at: r.updatedAt.toISOString(),
-  }));
 }
 
 export async function updateEncounterOrder(order: Record<string, any>) {

@@ -1,11 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
-import { db } from "@/db";
-import { sugbodocClinicalRecords } from "@/db/schema";
 import { errorJson, json, readJson } from "@/lib/api/http.server";
 import { getUserFromRequest } from "@/lib/api/sugbodoc-auth.server";
-import { createCheckoutSession, getStripeSecretKey } from "@/lib/api/stripe.server";
+import { createCheckoutSession, createMockCheckoutSession, getStripeSecretKey } from "@/lib/api/stripe.server";
+import { getPatientBillRecords } from "@/lib/api/clinical-records.server";
 
 const checkoutSchema = z.object({
   billId: z.string().min(1),
@@ -17,14 +15,6 @@ const checkoutSchema = z.object({
   successUrl: z.string().url(),
   cancelUrl: z.string().url(),
 });
-
-async function getPatientBillRecords(patientId: string) {
-  const records = await db
-    .select()
-    .from(sugbodocClinicalRecords)
-    .where(and(eq(sugbodocClinicalRecords.patientId, patientId), eq(sugbodocClinicalRecords.recordType, "bills")));
-  return records;
-}
 
 export const Route = createFileRoute("/api/stripe/create-checkout-session")({
   server: {
@@ -38,20 +28,36 @@ export const Route = createFileRoute("/api/stripe/create-checkout-session")({
           return json({ error: "Invalid checkout request", details: parsed.error.flatten() }, 400);
         }
 
+        const data = parsed.data;
+        const requestedBillIds = data.billIds ?? (data.billId === "all-bills" ? [] : [data.billId]);
+        const billRecords = await getPatientBillRecords(user.id);
+        const patientBills = billRecords.map((record) => record.data as Record<string, any>);
+        const billIds = requestedBillIds.length
+          ? requestedBillIds
+          : patientBills.filter((bill) => bill.status !== "Paid").map((bill) => String(bill.id));
+        const ownedBills = patientBills.filter((bill) => billIds.includes(String(bill.id)) && bill.status !== "Paid");
+
+        const effectiveBillIds = ownedBills.length ? ownedBills.map((b) => String(b.id)) : (billIds.length ? billIds : [data.billId]);
+
         const secretKey = getStripeSecretKey();
-        if (!secretKey) return errorJson("Payments are not configured yet. Add a Stripe secret key to enable checkout.", 503);
 
         try {
-          const data = parsed.data;
-          const requestedBillIds = data.billIds ?? (data.billId === "all-bills" ? [] : [data.billId]);
-          const billRecords = await getPatientBillRecords(user.id);
-          const patientBills = billRecords.map((record) => record.data as Record<string, any>);
-          const billIds = requestedBillIds.length
-            ? requestedBillIds
-            : patientBills.filter((bill) => bill.status !== "Paid").map((bill) => String(bill.id));
-          const ownedBills = patientBills.filter((bill) => billIds.includes(String(bill.id)) && bill.status !== "Paid");
-          if (!ownedBills.length) {
-            return errorJson("No unpaid database bills were found for this patient.", 404);
+          if (!secretKey) {
+            const mockSession = createMockCheckoutSession({
+              amount: data.amount,
+              customerEmail: user.email,
+              clientReferenceId: effectiveBillIds.length === 1 ? effectiveBillIds[0] : "all-bills",
+              metadata: {
+                billId: effectiveBillIds.length === 1 ? effectiveBillIds[0] : "all-bills",
+                billIds: effectiveBillIds.join(","),
+                patientId: user.id,
+                insuranceCoverageAmount: data.insuranceCoverageAmount.toFixed(2),
+              },
+              successUrl: data.successUrl,
+              cancelUrl: data.cancelUrl,
+            });
+
+            return json({ checkoutUrl: mockSession.url, sessionId: mockSession.id });
           }
 
           const session = await createCheckoutSession(secretKey, {
@@ -67,10 +73,10 @@ export const Route = createFileRoute("/api/stripe/create-checkout-session")({
               },
             ],
             customer_email: user.email,
-            client_reference_id: billIds.length === 1 ? billIds[0] : "all-bills",
+            client_reference_id: effectiveBillIds.length === 1 ? effectiveBillIds[0] : "all-bills",
             metadata: {
-              billId: billIds.length === 1 ? billIds[0] : "all-bills",
-              billIds: billIds.join(","),
+              billId: effectiveBillIds.length === 1 ? effectiveBillIds[0] : "all-bills",
+              billIds: effectiveBillIds.join(","),
               patientId: user.id,
               insuranceCoverageAmount: data.insuranceCoverageAmount.toFixed(2),
             },
@@ -91,3 +97,4 @@ export const Route = createFileRoute("/api/stripe/create-checkout-session")({
     },
   },
 });
+

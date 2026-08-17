@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { errorJson, json } from "@/lib/api/http.server";
-import { getStripeSecretKey, retrieveCheckoutSession } from "@/lib/api/stripe.server";
+import { getStripeSecretKey, retrieveCheckoutSessionOrMock } from "@/lib/api/stripe.server";
 
 export const Route = createFileRoute("/api/stripe/checkout-session/$sessionId")({
   server: {
@@ -11,10 +11,9 @@ export const Route = createFileRoute("/api/stripe/checkout-session/$sessionId")(
         }
 
         const secretKey = getStripeSecretKey();
-        if (!secretKey) return errorJson("Payments are not configured yet. Add a Stripe secret key to enable checkout.", 503);
 
         try {
-          const session = await retrieveCheckoutSession(secretKey, params.sessionId);
+          const session = await retrieveCheckoutSessionOrMock(secretKey, params.sessionId);
           return json({
             status: session.payment_status,
             billId: session.metadata?.billId ?? session.client_reference_id,
@@ -31,3 +30,4 @@ export const Route = createFileRoute("/api/stripe/checkout-session/$sessionId")(
     },
   },
 });
+

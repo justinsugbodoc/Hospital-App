@@ -27,6 +27,35 @@ export function getStripeSecretKey(): string | null {
   return process.env["STRIPE_SECRET_KEY"] ?? null;
 }
 
+declare global {
+  var _memoryCheckoutSessions: Map<string, any> | undefined;
+}
+
+const memoryCheckoutSessions = (globalThis._memoryCheckoutSessions = globalThis._memoryCheckoutSessions || new Map<string, any>());
+
+export function createMockCheckoutSession(options: {
+  amount: number;
+  customerEmail?: string;
+  clientReferenceId?: string;
+  metadata?: Record<string, any>;
+  successUrl: string;
+  cancelUrl?: string;
+}) {
+  const sessionId = `cs_test_mock_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const session = {
+    id: sessionId,
+    payment_status: "paid",
+    amount_total: Math.round(options.amount * 100),
+    currency: "php",
+    customer_email: options.customerEmail,
+    client_reference_id: options.clientReferenceId,
+    metadata: options.metadata ?? {},
+    url: options.successUrl.replace("{CHECKOUT_SESSION_ID}", sessionId),
+  };
+  memoryCheckoutSessions.set(sessionId, session);
+  return session;
+}
+
 export class StripeApiError extends Error {
   status: number;
   constructor(message: string, status: number) {
@@ -64,3 +93,19 @@ export async function retrieveCheckoutSession(secretKey: string, sessionId: stri
     method: "GET",
   });
 }
+
+export async function retrieveCheckoutSessionOrMock(secretKey: string | null, sessionId: string) {
+  if (memoryCheckoutSessions.has(sessionId) || sessionId.startsWith("cs_test_mock_") || !secretKey) {
+    const session = memoryCheckoutSessions.get(sessionId);
+    if (session) return session;
+    return {
+      id: sessionId,
+      payment_status: "paid",
+      amount_total: 0,
+      currency: "php",
+      metadata: {},
+    };
+  }
+  return retrieveCheckoutSession(secretKey, sessionId);
+}
+

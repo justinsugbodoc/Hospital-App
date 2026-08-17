@@ -83,16 +83,28 @@ export default function Medications() {
   ));
   const [pickupLocation, setPickupLocation] = useState(PARTNER_LOCATIONS[0]);
   const insurance = useMemo(() => currentUser?.insurance as Parameters<typeof calculateInsuranceEstimate>[1], [currentUser]);
-  const [catalog, setCatalog] = useState<AdminMedication[]>([]);
+  const [catalog, setCatalog] = useState<AdminMedication[]>(() => {
+    return LEGACY_MEDICATIONS_CATALOG.map((m) => ({
+      ...m,
+      dosageForm: m.form,
+      description: m.genericName,
+      enabled: m.stock > 0,
+      updatedAt: new Date().toISOString(),
+    }));
+  });
 
   useEffect(() => {
     let active = true;
     void serverPharmacyCatalog().then(({ medications }) => {
-      if (active) setCatalog(medications as AdminMedication[]);
+      if (active && Array.isArray(medications) && medications.length > 0) {
+        setCatalog(medications as AdminMedication[]);
+      }
     }).catch(() => undefined);
     const refreshCatalog = () => {
       void serverPharmacyCatalog().then(({ medications }) => {
-        if (active) setCatalog(medications as AdminMedication[]);
+        if (active && Array.isArray(medications) && medications.length > 0) {
+          setCatalog(medications as AdminMedication[]);
+        }
       }).catch(() => undefined);
     };
     window.addEventListener('storage', refreshCatalog);
