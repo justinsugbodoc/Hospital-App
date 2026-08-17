@@ -526,18 +526,37 @@ export async function loadPatientEncounters(patientId: string) {
       const grouped: Record<string, unknown> = {
         soapNotes: [], diagnoses: [], prescriptions: [], medications: [], pharmacyOrders: [],
         vitals: [], laboratoryResults: [], imaging: [], bills: [], payments: [], claims: [],
-        insurance: null, billing: {},
+        insurance: null, billing: {
+          consultationFee: 0,
+          laboratoryCharges: 0,
+          imagingCharges: 0,
+          pharmacyCharges: 0,
+          insuranceCoverage: 0,
+          payments: [],
+          relatedBillIds: [],
+        },
       };
       for (const record of byEncounter.get(row.id) ?? []) {
-        if (record.record_type === "insurance" || record.record_type === "billing") {
+        if (record.record_type === "insurance") {
           grouped[record.record_type] = record.data;
+        } else if (record.record_type === "billing") {
+          grouped.billing = {
+            ...(grouped.billing as Record<string, unknown>),
+            ...(record.data as Record<string, unknown>),
+          };
         } else if (isRecordType(record.record_type)) {
           (grouped[record.record_type] as unknown[]).push(record.data);
         }
       }
+      const rowData = (row.data as Record<string, unknown>) || {};
       return {
-        ...(row.data as Record<string, unknown>),
+        ...rowData,
         ...grouped,
+        appointmentDetails: (rowData.appointmentDetails as Record<string, unknown>) || {
+          date: row.encounter_date || (rowData.date as string) || "Recent consultation",
+          time: "Scheduled visit",
+          status: "Completed",
+        },
         id: row.id,
         patientId: row.patient_id,
         appointmentId: row.appointment_id,
@@ -569,18 +588,37 @@ export async function loadPatientEncounters(patientId: string) {
     const grouped: Record<string, unknown> = {
       soapNotes: [], diagnoses: [], prescriptions: [], medications: [], pharmacyOrders: [],
       vitals: [], laboratoryResults: [], imaging: [], bills: [], payments: [], claims: [],
-      insurance: null, billing: {},
+      insurance: null, billing: {
+        consultationFee: 0,
+        laboratoryCharges: 0,
+        imagingCharges: 0,
+        pharmacyCharges: 0,
+        insuranceCoverage: 0,
+        payments: [],
+        relatedBillIds: [],
+      },
     };
     for (const record of byEncounter.get(row.id) ?? []) {
-      if (record.record_type === "insurance" || record.record_type === "billing") {
+      if (record.record_type === "insurance") {
         grouped[record.record_type] = record.data;
+      } else if (record.record_type === "billing") {
+        grouped.billing = {
+          ...(grouped.billing as Record<string, unknown>),
+          ...(record.data as Record<string, unknown>),
+        };
       } else if (isRecordType(record.record_type)) {
         (grouped[record.record_type] as unknown[]).push(record.data);
       }
     }
+    const rowData = (row.data as Record<string, unknown>) || {};
     return {
-      ...(row.data as Record<string, unknown>),
+      ...rowData,
       ...grouped,
+      appointmentDetails: (rowData.appointmentDetails as Record<string, unknown>) || {
+        date: row.encounterDate || (rowData.date as string) || "Recent consultation",
+        time: "Scheduled visit",
+        status: "Completed",
+      },
       id: row.id,
       patientId: row.patientId,
       appointmentId: row.appointmentId,

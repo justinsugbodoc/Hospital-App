@@ -193,19 +193,24 @@ export default function Dashboard() {
             <div className="bg-card rounded-2xl border border-border overflow-hidden shadow-sm">
               {appointments.filter(appointment => !['Completed', 'Cancelled'].includes(appointment.status)).length > 0 ? (
                 <div className="divide-y divide-border">
-                  {appointments.filter(appointment => !['Completed', 'Cancelled'].includes(appointment.status)).slice(0, 3).map(apt => (
+                  {appointments.filter(appointment => !['Completed', 'Cancelled'].includes(appointment.status)).slice(0, 3).map(apt => {
+                    const dateParts = String(apt.date || '').trim().split(/\s+/);
+                    const monthText = dateParts[0] || 'VISIT';
+                    const dayText = dateParts[1] ? dateParts[1].replace(',', '') : '';
+                    const doctorObj = typeof apt.doctor === 'object' && apt.doctor !== null ? apt.doctor : { name: String(apt.doctor || 'Doctor'), specialty: 'General Practice', clinic: 'SugboDoc Clinic' };
+                    return (
                     <div key={apt.id} className="p-4 sm:p-5 flex flex-col sm:flex-row gap-4 sm:items-center justify-between hover:bg-muted/50 transition-colors">
                       <div className="flex gap-4 items-start">
                         <div className="bg-primary/5 border border-primary/10 rounded-xl p-3 text-center min-w-[70px]">
-                          <div className="text-xs font-semibold text-primary uppercase tracking-wider">{apt.date.split(' ')[0]}</div>
-                          <div className="text-xl font-bold text-foreground leading-tight">{apt.date.split(' ')[1].replace(',', '')}</div>
+                          <div className="text-xs font-semibold text-primary uppercase tracking-wider">{monthText}</div>
+                          <div className="text-xl font-bold text-foreground leading-tight">{dayText || '—'}</div>
                         </div>
                         <div>
-                          <h4 className="font-semibold text-foreground">{apt.doctor.name}</h4>
-                          <p className="text-sm text-muted-foreground">{apt.doctor.specialty} • {apt.doctor.clinic}</p>
+                          <h4 className="font-semibold text-foreground">{doctorObj.name || 'Attending Physician'}</h4>
+                          <p className="text-sm text-muted-foreground">{doctorObj.specialty || 'General Practice'} • {doctorObj.clinic || 'SugboDoc Health'}</p>
                           <div className="flex items-center gap-2 mt-2">
                             <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                            <span className="text-xs font-medium text-muted-foreground">{apt.time}</span>
+                            <span className="text-xs font-medium text-muted-foreground">{apt.time || 'Scheduled'}</span>
                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ml-2 ${getStatusColor(apt.status)}`}>
                               {apt.status}
                             </span>
@@ -213,7 +218,8 @@ export default function Dashboard() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                  );
+                  })}
                 </div>
               ) : (
                 <div className="p-8 text-center">
