@@ -92,6 +92,21 @@ export default function Messages() {
       const response = await serverMessageConversations();
       setThreads((current) => {
         if (!current.length) return response.conversations;
+        const isSame =
+          current.length === response.conversations.length &&
+          current.every((t, i) => {
+            const f = response.conversations[i];
+            return (
+              f &&
+              t.id === f.id &&
+              t.unreadCount === f.unreadCount &&
+              t.lastMessage?.id === f.lastMessage?.id &&
+              t.lastMessage?.body === f.lastMessage?.body
+            );
+          });
+
+        if (isSame) return current;
+
         const currentMap = new Map(current.map((t) => [t.id, t]));
         const updated = current.map((t) => {
           const fresh = response.conversations.find((c) => c.id === t.id);
