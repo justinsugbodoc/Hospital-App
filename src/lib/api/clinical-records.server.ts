@@ -88,8 +88,8 @@ declare global {
   var _memoryClinicalRecords: Map<string, ClinicalRecordRow> | undefined;
 }
 
-const memoryEncounters = (globalThis._memoryEncounters = globalThis._memoryEncounters || new Map<string, EncounterRow>());
-const memoryClinicalRecords = (globalThis._memoryClinicalRecords = globalThis._memoryClinicalRecords || new Map<string, ClinicalRecordRow>());
+export const memoryEncounters = (globalThis._memoryEncounters = globalThis._memoryEncounters || new Map<string, EncounterRow>());
+export const memoryClinicalRecords = (globalThis._memoryClinicalRecords = globalThis._memoryClinicalRecords || new Map<string, ClinicalRecordRow>());
 
 function seedDefaultEncountersForPatient(patientId: string, patientName = "Juan dela Cruz") {
   const enc1Id = `enc_apt_10_${patientId}`;

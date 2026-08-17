@@ -4,7 +4,7 @@ import { CreditCard, FileText, CheckCircle2, ChevronRight, ShieldCheck, External
 import { useToast } from '@/hooks/use-toast';
 import { calculateInsuranceEstimate, createOrUpdateClaim } from '@/lib/insurance';
 import { getCurrentSessionUser } from '@/hooks/use-auth';
-import { getLatestPatientEncounter } from '@/lib/encounters';
+import { getLatestPatientEncounter, loadEncounters } from '@/lib/encounters';
 import { serverConfirmBillPayment, serverCreateBillCheckout, serverPharmacyOrders, serverRecords, serverUpdateMe } from '@/lib/server';
 
 function pharmacyHistoryRows(orders: any[]) {
@@ -45,34 +45,58 @@ export default function Billing() {
 
   useEffect(() => {
     let active = true;
-    void Promise.all([serverRecords(), serverPharmacyOrders()]).then(([{ encounters }, { orders }]) => {
-      const sharedBills = encounters.flatMap((encounter: any) =>
-        (encounter.bills ?? []).map((bill: any) => ({
-          ...bill,
-          encounterId: bill.encounterId ?? encounter.id,
-          encounterReference: bill.encounterReference ?? encounter.encounterReference,
-        })),
-      );
-      const paidPharmacyOrders = pharmacyHistoryRows(orders);
-      if (active) {
-        if (sharedBills.length) {
-          setBills(sharedBills.filter((bill: any) => bill.status !== 'Paid'));
-          setHistory([...sharedBills.filter((bill: any) => bill.status === 'Paid'), ...paidPharmacyOrders]);
-        } else {
-          setBills([]);
-          setHistory(paidPharmacyOrders);
+    const fetchBillingData = async () => {
+      try {
+        const recordsPromise = serverRecords().catch((err) => {
+          console.warn("[Billing] serverRecords fallback:", err);
+          const fallback = loadEncounters();
+          return { patientId: currentUser?.id ?? '', encounters: fallback.length ? fallback : (activeEncounter ? [activeEncounter] : []) };
+        });
+
+        const pharmacyPromise = serverPharmacyOrders().catch((err) => {
+          console.warn("[Billing] serverPharmacyOrders fallback:", err);
+          return { orders: [] };
+        });
+
+        const [{ encounters }, { orders }] = await Promise.all([recordsPromise, pharmacyPromise]);
+        const sharedBills = (encounters || []).flatMap((encounter: any) =>
+          (encounter.bills ?? []).map((bill: any) => ({
+            ...bill,
+            encounterId: bill.encounterId ?? encounter.id,
+            encounterReference: bill.encounterReference ?? encounter.encounterReference,
+          })),
+        );
+        const paidPharmacyOrders = pharmacyHistoryRows(orders || []);
+        if (active) {
+          if (sharedBills.length) {
+            setBills(sharedBills.filter((bill: any) => bill.status !== 'Paid'));
+            setHistory([...sharedBills.filter((bill: any) => bill.status === 'Paid'), ...paidPharmacyOrders]);
+          } else {
+            setBills([]);
+            setHistory(paidPharmacyOrders);
+          }
+          setBillingError(null);
+          setIsLoading(false);
         }
-        setBillingError(null);
-        setIsLoading(false);
+      } catch (error) {
+        if (active) {
+          const fallbackEncounters = loadEncounters();
+          const fallbackBills = fallbackEncounters.flatMap((enc: any) => (enc.bills ?? []));
+          if (fallbackBills.length) {
+            setBills(fallbackBills.filter((b: any) => b.status !== 'Paid'));
+            setHistory(fallbackBills.filter((b: any) => b.status === 'Paid'));
+            setBillingError(null);
+          } else {
+            setBills([]);
+            setHistory([]);
+            setBillingError(error instanceof Error ? error.message : 'Unable to load billing records.');
+          }
+          setIsLoading(false);
+        }
       }
-    }).catch((error) => {
-      if (active) {
-        setBills([]);
-        setHistory([]);
-        setBillingError(error instanceof Error ? error.message : 'Unable to load billing records.');
-        setIsLoading(false);
-      }
-    });
+    };
+
+    void fetchBillingData();
     return () => {
       active = false;
     };

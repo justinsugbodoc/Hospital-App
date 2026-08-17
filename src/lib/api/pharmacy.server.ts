@@ -374,74 +374,82 @@ export async function updateEncounterOrder(order: Record<string, any>) {
 }
 
 export async function ensureOrdersFromClinicalRecords() {
-  const existing = await db.select({ reference: sugbodocPharmacyOrders.reference }).from(sugbodocPharmacyOrders);
-  const existingReferences = new Set(existing.map((item) => item.reference));
+  try {
+    const existing = await db.select({ reference: sugbodocPharmacyOrders.reference }).from(sugbodocPharmacyOrders);
+    const existingReferences = new Set(existing.map((item) => item.reference));
 
-  const records = await db
-    .select({
-      patientId: sugbodocClinicalRecords.patientId,
-      encounterId: sugbodocClinicalRecords.encounterId,
-      data: sugbodocClinicalRecords.data,
-    })
-    .from(sugbodocClinicalRecords)
-    .where(eq(sugbodocClinicalRecords.recordType, "pharmacyOrders"));
+    const records = await db
+      .select({
+        patientId: sugbodocClinicalRecords.patientId,
+        encounterId: sugbodocClinicalRecords.encounterId,
+        data: sugbodocClinicalRecords.data,
+      })
+      .from(sugbodocClinicalRecords)
+      .where(eq(sugbodocClinicalRecords.recordType, "pharmacyOrders"));
 
-  for (const record of records) {
-    const order = (record.data ?? {}) as Record<string, any>;
-    if (!order.reference || existingReferences.has(String(order.reference))) continue;
-    try {
-      await db
-        .insert(sugbodocPharmacyOrders)
-        .values({
-          reference: String(order.reference),
-          patientId: record.patientId,
-          encounterId: record.encounterId,
-          status: String(order.status ?? "Pending"),
-          paymentStatus: String(order.paymentStatus ?? "pending"),
-          billId: typeof order.billId === "string" ? order.billId : null,
-          data: { ...order, patientId: record.patientId, encounterId: record.encounterId },
-          receivedAt: typeof order.receivedAt === "string" ? new Date(order.receivedAt) : null,
-        });
-    } catch {
-      // ignore duplicate/conflicting backfill rows
+    for (const record of records) {
+      const order = (record.data ?? {}) as Record<string, any>;
+      if (!order.reference || existingReferences.has(String(order.reference))) continue;
+      try {
+        await db
+          .insert(sugbodocPharmacyOrders)
+          .values({
+            reference: String(order.reference),
+            patientId: record.patientId,
+            encounterId: record.encounterId,
+            status: String(order.status ?? "Pending"),
+            paymentStatus: String(order.paymentStatus ?? "pending"),
+            billId: typeof order.billId === "string" ? order.billId : null,
+            data: { ...order, patientId: record.patientId, encounterId: record.encounterId },
+            receivedAt: typeof order.receivedAt === "string" ? new Date(order.receivedAt) : null,
+          });
+      } catch {
+        // ignore duplicate/conflicting backfill rows
+      }
     }
+  } catch (err) {
+    console.warn("[ensureOrdersFromClinicalRecords] non-fatal sync error:", err);
   }
 }
 
 export async function ensureFinancialRecordsForPaidOrders() {
-  const paidOrders = await db
-    .select()
-    .from(sugbodocPharmacyOrders)
-    .where(eq(sugbodocPharmacyOrders.paymentStatus, "paid"));
+  try {
+    const paidOrders = await db
+      .select()
+      .from(sugbodocPharmacyOrders)
+      .where(eq(sugbodocPharmacyOrders.paymentStatus, "paid"));
 
-  for (const order of paidOrders) {
-    const orderRow: PharmacyOrderRow = {
-      reference: order.reference,
-      patient_id: order.patientId,
-      encounter_id: order.encounterId,
-      bill_id: order.billId,
-      status: order.status,
-      payment_status: order.paymentStatus,
-      data: order.data as Record<string, any>,
-      received_at: order.receivedAt ? order.receivedAt.toISOString() : null,
-      created_at: order.createdAt.toISOString(),
-      updated_at: order.updatedAt.toISOString(),
-    };
+    for (const order of paidOrders) {
+      const orderRow: PharmacyOrderRow = {
+        reference: order.reference,
+        patient_id: order.patientId,
+        encounter_id: order.encounterId,
+        bill_id: order.billId,
+        status: order.status,
+        payment_status: order.paymentStatus,
+        data: order.data as Record<string, any>,
+        received_at: order.receivedAt ? order.receivedAt.toISOString() : null,
+        created_at: order.createdAt.toISOString(),
+        updated_at: order.updatedAt.toISOString(),
+      };
 
-    const existing = await db
-      .select({ id: sugbodocPharmacyBills.id })
-      .from(sugbodocPharmacyBills)
-      .where(eq(sugbodocPharmacyBills.orderReference, order.reference))
-      .limit(1);
+      const existing = await db
+        .select({ id: sugbodocPharmacyBills.id })
+        .from(sugbodocPharmacyBills)
+        .where(eq(sugbodocPharmacyBills.orderReference, order.reference))
+        .limit(1);
 
-    if (existing.length > 0) continue;
+      if (existing.length > 0) continue;
 
-    const data = (order.data ?? {}) as any;
-    await ensurePharmacyFinancialRecords(orderRow, {
-      amount: Number(data.paidAmount ?? data.totals?.total ?? 0),
-      paidAt: new Date(data.paymentDate ?? order.updatedAt),
-      stripeSessionId: data.paymentSessionId ?? null,
-      reference: data.paymentReference ?? `LEGACY-${order.reference}`,
-    });
+      const data = (order.data ?? {}) as any;
+      await ensurePharmacyFinancialRecords(orderRow, {
+        amount: Number(data.paidAmount ?? data.totals?.total ?? 0),
+        paidAt: new Date(data.paymentDate ?? order.updatedAt),
+        stripeSessionId: data.paymentSessionId ?? null,
+        reference: data.paymentReference ?? `LEGACY-${order.reference}`,
+      });
+    }
+  } catch (err) {
+    console.warn("[ensureFinancialRecordsForPaidOrders] non-fatal sync error:", err);
   }
 }
