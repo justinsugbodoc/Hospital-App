@@ -201,7 +201,7 @@ export const Route = createFileRoute("/api/messages/")({
             }
           }
 
-          // Always ensure the mock doctors are available for patient messaging if demo patient
+          // If no appointments yet or demo patient, include default booked mock doctors
           if (bookedDoctorIds.size === 0 || user.id === "pt_123" || user.email === "juan@example.com") {
             bookedDoctorIds.add("dr_2"); // Dr. Jose Reyes
             bookedDoctorIds.add("dr_1"); // Dr. Maria Santos

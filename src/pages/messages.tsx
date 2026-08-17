@@ -30,6 +30,7 @@ export default function Messages() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
+  const hasInitializedUrlRef = useRef(false);
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
   const isPatient = session?.role === 'Patient';
@@ -89,29 +90,52 @@ export default function Messages() {
     if (showLoading) setLoading(true);
     try {
       const response = await serverMessageConversations();
-      setThreads(response.conversations);
+      setThreads((current) => {
+        if (!current.length) return response.conversations;
+        const currentMap = new Map(current.map((t) => [t.id, t]));
+        const updated = current.map((t) => {
+          const fresh = response.conversations.find((c) => c.id === t.id);
+          return fresh ? { ...t, ...fresh } : t;
+        });
+        for (const fresh of response.conversations) {
+          if (!currentMap.has(fresh.id)) {
+            updated.push(fresh);
+          }
+        }
+        return updated;
+      });
 
-      const searchParams = new URLSearchParams(window.location.search);
-      const threadParam = searchParams.get('thread');
-      const doctorParam = searchParams.get('doctor');
+      if (!hasInitializedUrlRef.current) {
+        hasInitializedUrlRef.current = true;
+        const searchParams = new URLSearchParams(window.location.search);
+        const threadParam = searchParams.get('thread');
+        const doctorParam = searchParams.get('doctor');
 
-      if (threadParam && response.conversations.some((c) => c.id === threadParam)) {
-        setActiveThreadId(threadParam);
-      } else if (doctorParam) {
-        const normDoc = doctorParam.replace('doctor_', '');
-        const found = response.conversations.find((c) =>
-          c.doctorId === normDoc ||
-          c.doctorId === `doctor_${normDoc}` ||
-          c.id.includes(`_${normDoc}_`)
-        );
-        if (found) {
-          setActiveThreadId(found.id);
+        if (threadParam && response.conversations.some((c) => c.id === threadParam)) {
+          setActiveThreadId(threadParam);
+        } else if (doctorParam) {
+          const normDoc = doctorParam.replace('doctor_', '');
+          const found = response.conversations.find((c) =>
+            c.doctorId === normDoc ||
+            c.doctorId === `doctor_${normDoc}` ||
+            c.id.includes(`_${normDoc}_`)
+          );
+          if (found) {
+            setActiveThreadId(found.id);
+          } else if (!activeThreadId && response.conversations[0]) {
+            setActiveThreadId(response.conversations[0].id);
+          }
         } else if (!activeThreadId && response.conversations[0]) {
           setActiveThreadId(response.conversations[0].id);
+        }
+
+        if (threadParam || doctorParam) {
+          window.history.replaceState({}, '', window.location.pathname);
         }
       } else if (!activeThreadId && response.conversations[0]) {
         setActiveThreadId(response.conversations[0].id);
       }
+
       setError('');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to load messages.');
