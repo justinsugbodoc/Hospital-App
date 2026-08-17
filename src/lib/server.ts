@@ -185,6 +185,18 @@ export type ServerMessageConversation = {
   patientName: string;
   patientInitials: string;
   patientEmail: string;
+  doctorId?: string;
+  doctorName?: string;
+  doctorSpecialty?: string;
+  doctorClinic?: string;
+  doctorInitials?: string;
+  appointmentId?: string;
+  appointmentReference?: string;
+  appointmentDate?: string;
+  appointmentTime?: string;
+  appointmentStatus?: string;
+  encounterId?: string;
+  encounterReference?: string;
   updatedAt: string;
   unreadCount: number;
   lastMessage: ServerMessage | null;

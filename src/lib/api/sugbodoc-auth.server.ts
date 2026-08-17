@@ -328,8 +328,36 @@ export async function registerUser(input: {
   return memUser;
 }
 
-export async function loginUser(email: string, password: string) {
-  const normalized = normalizeEmail(email);
+export async function loginUser(identifier: string, password: string) {
+  const input = identifier.trim();
+  let normalized = normalizeEmail(input);
+
+  // Map username aliases to canonical emails
+  const usernameMap: Record<string, string> = {
+    "jose.reyes": "doctor@sugbodoc.test",
+    "jose.reyes@sugbodoc.test": "doctor@sugbodoc.test",
+    "doctor": "doctor@sugbodoc.test",
+    "doctor@sugbodoc.test": "doctor@sugbodoc.test",
+    "maria.santos": "maria.santos@sugbodoc.test",
+    "maria.santos@sugbodoc.test": "maria.santos@sugbodoc.test",
+    "ana.villanueva": "ana.villanueva@sugbodoc.test",
+    "ana.villanueva@sugbodoc.test": "ana.villanueva@sugbodoc.test",
+    "admin": "admin@sugbodoc.test",
+    "admin@sugbodoc.test": "admin@sugbodoc.test",
+    "juan": "juan@example.com",
+    "juan@example.com": "juan@example.com",
+  };
+
+  const lowerInput = input.toLowerCase();
+  if (usernameMap[lowerInput]) {
+    normalized = usernameMap[lowerInput];
+  } else if (!lowerInput.includes("@")) {
+    normalized = `${lowerInput}@sugbodoc.test`;
+  }
+
+  // Ensure demo accounts exist before checking
+  await ensureDemoAdmin();
+  await ensureAllDemoDoctors();
 
   // Try DB first
   try {
@@ -353,7 +381,7 @@ export async function loginUser(email: string, password: string) {
   }
 
   // Fallback to memory store
-  const memUser = memoryUsers.get(normalized);
+  const memUser = memoryUsers.get(normalized) || memoryUsers.get(lowerInput);
   if (memUser) {
     if (memUser.status === "Inactive" || !(await verifyPassword(password, memUser.password_hash))) {
       return null;
@@ -382,6 +410,7 @@ async function ensureUser(email: string, values: {
   clinical_editing_permission?: string;
   insurance_data?: Record<string, unknown> | null;
   claims_data?: Record<string, unknown>[] | null;
+  aliases?: string[];
 }) {
   const normalized = normalizeEmail(email);
   const nowStr = new Date().toISOString();
@@ -412,6 +441,11 @@ async function ensureUser(email: string, values: {
   // Always seed in-memory store so it is immediately accessible
   memoryUsers.set(memUser.id, memUser);
   memoryUsers.set(normalized, memUser);
+  if (values.aliases) {
+    for (const alias of values.aliases) {
+      memoryUsers.set(alias.toLowerCase(), memUser);
+    }
+  }
 
   try {
     const existing = await db
@@ -477,6 +511,7 @@ export async function ensureDemoPatient() {
     role: "Patient",
     status: "Active",
     clinical_editing_permission: "false",
+    aliases: ["juan"],
   });
 }
 
@@ -496,29 +531,94 @@ export async function ensureDemoAdmin() {
     clinical_editing_permission: "false",
     insurance_data: null,
     claims_data: [],
+    aliases: ["admin"],
   });
 }
 
-export async function ensureDemoDoctor() {
-  return ensureUser("doctor@sugbodoc.test", {
+export const MOCK_DOCTORS = [
+  {
     id: "doctor_dr_2",
+    providerId: "dr_2",
     name: "Dr. Jose Reyes",
     initials: "JR",
-    password_hash: await hashPassword("doctor123"),
+    username: "jose.reyes",
+    email: "doctor@sugbodoc.test",
+    secondaryEmail: "jose.reyes@sugbodoc.test",
+    specialty: "Cardiology",
+    clinic: "Chong Hua Hospital",
     phone: "+63 917 000 0002",
     birthday: "1982-06-18",
     gender: "Male",
-    blood_type: "",
     role: "Doctor",
-    provider_id: "dr_2",
-    specialty: "Cardiology",
-    clinic: "Chong Hua Hospital",
-    allergies: [],
-    status: "Active",
-    clinical_editing_permission: "true",
-    insurance_data: null,
-    claims_data: [],
-  });
+    password: "doctor123",
+    aliases: ["jose.reyes", "doctor", "jose.reyes@sugbodoc.test"],
+  },
+  {
+    id: "doctor_dr_1",
+    providerId: "dr_1",
+    name: "Dr. Maria Santos",
+    initials: "MS",
+    username: "maria.santos",
+    email: "maria.santos@sugbodoc.test",
+    specialty: "Internal Medicine",
+    clinic: "Cebu Doctors' University Hospital",
+    phone: "+63 917 000 0001",
+    birthday: "1985-09-24",
+    gender: "Female",
+    role: "Doctor",
+    password: "doctor123",
+    aliases: ["maria.santos", "maria.santos@sugbodoc.test"],
+  },
+  {
+    id: "doctor_dr_3",
+    providerId: "dr_3",
+    name: "Dr. Ana Villanueva",
+    initials: "AV",
+    username: "ana.villanueva",
+    email: "ana.villanueva@sugbodoc.test",
+    specialty: "OB-GYN",
+    clinic: "Perpetual Succour Hospital",
+    phone: "+63 917 000 0003",
+    birthday: "1980-04-12",
+    gender: "Female",
+    role: "Doctor",
+    password: "doctor123",
+    aliases: ["ana.villanueva", "ana.villanueva@sugbodoc.test"],
+  },
+] as const;
+
+export async function ensureAllDemoDoctors() {
+  await ensureDemoPatient();
+  const results = [];
+  for (const doc of MOCK_DOCTORS) {
+    const user = await ensureUser(doc.email, {
+      id: doc.id,
+      name: doc.name,
+      initials: doc.initials,
+      password_hash: await hashPassword(doc.password),
+      phone: doc.phone,
+      birthday: doc.birthday,
+      gender: doc.gender,
+      blood_type: "",
+      role: "Doctor",
+      provider_id: doc.providerId,
+      specialty: doc.specialty,
+      clinic: doc.clinic,
+      allergies: [],
+      status: "Active",
+      clinical_editing_permission: "true",
+      insurance_data: null,
+      claims_data: [],
+      aliases: [...doc.aliases],
+    });
+    results.push(user);
+  }
+  return results;
+}
+
+export async function ensureDemoDoctor() {
+  const doctors = await ensureAllDemoDoctors();
+  return doctors[0]; // Dr. Jose Reyes (doctor@sugbodoc.test)
 }
 
 export function isAdminUser(user: AuthUser | null) {
@@ -538,13 +638,31 @@ export async function doctorCanAccessPatient(user: AuthUser | null, patientId: s
       .from(sugbodocAppointments)
       .where(eq(sugbodocAppointments.userId, patientId));
 
-    return appointments.some((appointment) => {
+    const hasAppointment = appointments.some((appointment) => {
       const doctor = (appointment.data as Record<string, any>)?.doctor;
-      return doctor?.id === providerId;
+      return doctor?.id === providerId || doctor?.providerId === providerId;
     });
+    if (hasAppointment) return true;
+
+    // Check memory store for appointments as well
+    const memAppts = Array.from(globalThis._memoryAppointments?.values() || []);
+    const hasMemAppt = memAppts.some((appt) => {
+      if (appt.user_id !== patientId) return false;
+      const doctor = (appt.data as Record<string, any>)?.doctor;
+      return doctor?.id === providerId || doctor?.providerId === providerId;
+    });
+    if (hasMemAppt) return true;
+
+    return false;
   } catch (err) {
     console.warn("[doctorCanAccessPatient] DB query fallback:", err);
-    return true;
+    // In fallback mode, check memory appointments
+    const memAppts = Array.from(globalThis._memoryAppointments?.values() || []);
+    return memAppts.some((appt) => {
+      if (appt.user_id !== patientId) return false;
+      const doctor = (appt.data as Record<string, any>)?.doctor;
+      return doctor?.id === providerId || doctor?.providerId === providerId;
+    });
   }
 }
 

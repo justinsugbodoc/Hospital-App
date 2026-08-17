@@ -119,11 +119,13 @@ function EncounterEditor({ patient, encounter, doctor, onSaved }: { patient: Doc
   </div>;
 }
 
-function MessagesPanel({ patientId }: { patientId?: string }) {
+function MessagesPanel({ patientId, patientName }: { patientId?: string; patientName?: string }) {
   const [messages, setMessages] = useState<ServerMessage[]>([]);
   const [active, setActive] = useState<ServerMessageConversation | null>(null);
   const [body, setBody] = useState('');
   const [error, setError] = useState('');
+  const [sending, setSending] = useState(false);
+
   useEffect(() => {
     if (!patientId) {
       setActive(null);
@@ -131,24 +133,138 @@ function MessagesPanel({ patientId }: { patientId?: string }) {
       return;
     }
     void serverMessageConversations()
-      .then(response => {
-        const next = response.conversations.find(item => item.patientId === patientId);
+      .then((response) => {
+        const next = response.conversations.find((item) => item.patientId === patientId);
         setActive(next || null);
         if (!next) setMessages([]);
       })
-      .catch(error => setError(error instanceof Error ? error.message : 'Unable to load messages.'));
+      .catch((error) => setError(error instanceof Error ? error.message : 'Unable to load messages.'));
   }, [patientId]);
+
   useEffect(() => {
     if (!active) return;
     void serverMessages(active.id)
-      .then(response => {
+      .then((response) => {
         setMessages(response.messages);
         return serverMarkMessagesRead(active.id);
       })
-      .catch(error => setError(error instanceof Error ? error.message : 'Unable to load conversation.'));
+      .catch((error) => setError(error instanceof Error ? error.message : 'Unable to load conversation.'));
   }, [active?.id]);
-  const send = async (event: React.FormEvent) => { event.preventDefault(); if (!active || !body.trim()) return; try { const response = await serverSendMessage(active.id, body.trim()); setMessages(current => [...current, response.message]); setBody(''); } catch (error) { setError(error instanceof Error ? error.message : 'Unable to send message.'); } };
-  return <div className={`${cardClass} overflow-hidden`}><div className="border-b border-border p-4"><h3 className="flex items-center gap-2 font-bold"><MessageSquare className="h-4 w-4 text-primary" /> Patient messaging</h3>{error && <p className="mt-2 text-xs text-rose-600">{error}</p>}</div><div className="max-h-72 space-y-3 overflow-y-auto p-4">{messages.length ? messages.map(message => <div key={message.id} className={`flex ${message.senderId === getCurrentSessionUser()?.id ? 'justify-end' : 'justify-start'}`}><div className="max-w-[80%] rounded-2xl border border-border bg-muted/40 px-3 py-2 text-sm"><p>{message.body}</p><p className="mt-1 text-[10px] text-muted-foreground">{new Date(message.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}</p></div></div>) : <p className="text-sm text-muted-foreground">Select an assigned patient to view their conversation.</p>}</div><form onSubmit={send} className="flex gap-2 border-t border-border p-3"><input value={body} onChange={event => setBody(event.target.value)} placeholder={active ? `Message ${active.patientName}…` : 'Select a patient first'} className={inputClass} disabled={!active} /><button disabled={!active || !body.trim()} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground disabled:opacity-50"><Send className="h-4 w-4" /></button></form></div>;
+
+  const send = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!patientId || !body.trim() || sending) return;
+    setSending(true);
+    setError('');
+    try {
+      let conversationId = active?.id;
+      if (!conversationId) {
+        // Find or refresh conversation
+        const convs = await serverMessageConversations();
+        const found = convs.conversations.find((c) => c.patientId === patientId);
+        if (found) {
+          conversationId = found.id;
+          setActive(found);
+        } else {
+          // Send to doctor-patient conversation format
+          conversationId = `conversation_doctor_${patientId}`;
+        }
+      }
+      const response = await serverSendMessage(conversationId, body.trim());
+      setMessages((current) => [...current, response.message]);
+      setBody('');
+      const refreshedConvs = await serverMessageConversations();
+      const updated = refreshedConvs.conversations.find((c) => c.patientId === patientId);
+      if (updated) setActive(updated);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Unable to send message.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const targetName = active?.patientName || patientName || 'Assigned Patient';
+
+  return (
+    <div className={`${cardClass} overflow-hidden flex flex-col h-[560px]`}>
+      <div className="border-b border-border bg-card p-4 flex items-center justify-between">
+        <div>
+          <h3 className="flex items-center gap-2 font-bold text-foreground">
+            <MessageSquare className="h-4 w-4 text-primary" />
+            Direct Patient Messaging
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Synchronized patient communication with <strong className="text-foreground">{targetName}</strong>
+          </p>
+        </div>
+        {active?.appointmentReference && (
+          <span className="text-xs font-medium rounded-lg bg-primary/10 text-primary px-2.5 py-1">
+            Ref: {active.appointmentReference}
+          </span>
+        )}
+      </div>
+
+      {error && <p className="bg-rose-50 border-b border-rose-200 px-4 py-2 text-xs text-rose-700">{error}</p>}
+
+      <div className="flex-1 space-y-3 overflow-y-auto p-4 bg-slate-50/50 dark:bg-background">
+        {patientId ? (
+          messages.length ? (
+            messages.map((message) => {
+              const isDoctor = message.senderRole === 'Doctor' || message.senderId === getCurrentSessionUser()?.id;
+              return (
+                <div key={message.id} className={`flex flex-col ${isDoctor ? 'items-end' : 'items-start'}`}>
+                  <span className="text-[10px] text-muted-foreground px-1 mb-0.5">
+                    {isDoctor ? 'You (Doctor)' : message.senderName}
+                  </span>
+                  <div
+                    className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm shadow-xs ${
+                      isDoctor
+                        ? 'rounded-tr-xs bg-primary text-primary-foreground'
+                        : 'rounded-tl-xs border border-border bg-card text-foreground'
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap leading-relaxed">{message.body}</p>
+                    <p className={`mt-1 text-[10px] ${isDoctor ? 'text-primary-foreground/75' : 'text-muted-foreground'}`}>
+                      {new Date(message.createdAt).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center text-muted-foreground py-10">
+              <MessageSquare className="mb-2 h-10 w-10 opacity-30" />
+              <p className="text-sm font-semibold text-foreground">No prior messages</p>
+              <p className="text-xs max-w-xs text-center mt-1">
+                Type a message below to send instructions or advice to {targetName}.
+              </p>
+            </div>
+          )
+        ) : (
+          <div className="flex h-full items-center justify-center text-muted-foreground">
+            <p className="text-sm">Select an assigned patient from the list.</p>
+          </div>
+        )}
+      </div>
+
+      <form onSubmit={send} className="flex gap-2 border-t border-border bg-card p-3">
+        <input
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          placeholder={patientId ? `Message ${targetName}…` : 'Select a patient first'}
+          className={`${inputClass} flex-1`}
+          disabled={!patientId || sending}
+        />
+        <button
+          type="submit"
+          disabled={!patientId || !body.trim() || sending}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-xs disabled:opacity-50 transition hover:bg-primary/90"
+        >
+          <Send className="h-4 w-4" />
+        </button>
+      </form>
+    </div>
+  );
 }
 
 export default function Doctor() {
@@ -173,7 +289,7 @@ export default function Doctor() {
     {section === 'dashboard' && <><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Clinical workspace</p><h1 className="mt-1 text-2xl font-bold tracking-tight">Good morning, {data?.doctor.name}</h1><p className="mt-1 text-sm text-muted-foreground">Your assigned appointments, patient worklist, and clinical follow-ups.</p></div><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Today's appointments" value={data?.stats.todayAppointments || 0} icon={CalendarDays} tone="bg-violet-50 text-violet-600" /><Metric label="Pending SOAP notes" value={data?.stats.pendingSoapNotes || 0} icon={FileText} tone="bg-amber-50 text-amber-600" /><Metric label="Follow-ups" value={data?.stats.followUps || 0} icon={ClipboardList} tone="bg-cyan-50 text-cyan-600" /><Metric label="Unread messages" value={data?.stats.unreadMessages || 0} icon={MessageSquare} tone="bg-rose-50 text-rose-600" /></div><div className="grid gap-5 xl:grid-cols-[1.35fr_1fr]"><div className={`${cardClass} overflow-hidden`}><div className="border-b border-border p-4"><h2 className="font-bold">Patient worklist</h2><p className="mt-1 text-xs text-muted-foreground">Only patients assigned to your provider profile are shown.</p></div><div className="divide-y divide-border">{data?.patients.length ? data.patients.slice(0, 8).map(item => <button key={item.id} onClick={() => void openPatient(item.id)} className="flex w-full items-center gap-3 p-4 text-left hover:bg-muted/40"><div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{item.initials}</div><div className="min-w-0 flex-1"><p className="font-semibold">{item.name}</p><p className="text-xs text-muted-foreground">{item.email} · {item.encounters.length} encounters</p></div><ChevronDown className="h-4 w-4 -rotate-90 text-muted-foreground" /></button>) : <p className="p-6 text-sm text-muted-foreground">No assigned patients yet.</p>}</div></div><div className={`${cardClass} overflow-hidden`}><div className="border-b border-border p-4"><h2 className="font-bold">Appointment queue</h2></div><div className="divide-y divide-border">{data?.appointments.slice(0, 6).map(item => <AppointmentRow key={item.id} appointment={item} onStatus={status => void updateStatus(item, status)} />)}</div></div></div></>}
     {section === 'appointments' && <><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Care schedule</p><h1 className="mt-1 text-2xl font-bold tracking-tight">Assigned appointments</h1><p className="mt-1 text-sm text-muted-foreground">Update visit status and open the linked patient chart.</p></div><div className={`${cardClass} divide-y divide-border overflow-hidden`}>{data?.appointments.length ? data.appointments.map(item => <AppointmentRow key={item.id} appointment={item} onStatus={status => void updateStatus(item, status)} />) : <p className="p-8 text-sm text-muted-foreground">No assigned appointments.</p>}</div></>}
     {section === 'patients' && <><div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Authorized records</p><h1 className="mt-1 text-2xl font-bold tracking-tight">My patients</h1><p className="mt-1 text-sm text-muted-foreground">Review assigned patient details and update shared clinical encounters.</p></div><div className="relative w-full sm:w-80"><Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search assigned patients…" className={`${inputClass} pl-9`} /></div></div><div className="grid gap-5 xl:grid-cols-[280px_1fr]"><div className={`${cardClass} divide-y divide-border overflow-hidden`}>{patients.map(item => <button key={item.id} onClick={() => void openPatient(item.id)} className={`flex w-full items-center gap-3 p-4 text-left hover:bg-muted/40 ${patient?.id === item.id ? 'bg-primary/5' : ''}`}><div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{item.initials}</div><div className="min-w-0"><p className="truncate text-sm font-semibold">{item.name}</p><p className="truncate text-xs text-muted-foreground">{item.email}</p></div></button>)}{!patients.length && <p className="p-5 text-sm text-muted-foreground">No assigned patients found.</p>}</div>{patient ? <div className="space-y-4"><SummaryPanel patient={patient} /><div className={`${cardClass} p-4`}><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="text-xs font-bold uppercase tracking-wider text-primary">Encounter records</p><h2 className="mt-1 font-bold">{patient.name}</h2></div><select value={selectedEncounter?.id || ''} onChange={event => setEncounterId(event.target.value)} className="h-10 rounded-xl border border-input bg-background px-3 text-sm"><option value="">Select encounter</option>{patient.encounters.map(item => <option key={item.id} value={item.id}>{item.encounterReference} · {item.encounterDate}</option>)}</select></div><div className="mt-4 flex flex-wrap gap-2">{patient.appointments.slice(0, 5).map(item => <button key={item.id} onClick={() => void updateStatus(item, 'In Progress')} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold hover:border-primary">Start {item.reference}</button>)}</div></div><EncounterEditor patient={patient} encounter={selectedEncounter as Encounter | null} doctor={data!.doctor} onSaved={(saved, savedAppointment) => { setPatient(current => current ? { ...current, encounters: current.encounters.map(item => item.id === saved.id ? saved : item), appointments: savedAppointment ? current.appointments.map(item => item.id === savedAppointment.id ? savedAppointment : item) : current.appointments } : current); setNotice('Encounter updated and synchronized with Patient/Admin records.'); }} /><FollowUpPanel patient={patient} onCreated={appointment => { setNotice(`Follow-up ${appointment.reference} created. Email and mock SMS are pending.`); void refresh(); }} /></div> : <div className={`${cardClass} flex min-h-80 items-center justify-center p-8 text-center text-muted-foreground`}><div><UserRound className="mx-auto mb-3 h-10 w-10 opacity-30" /><p className="font-semibold">Select an assigned patient</p><p className="mt-1 text-sm">Patient access is logged when a record is opened.</p></div></div>}</div></>}
-    {section === 'messages' && <><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Care communication</p><h1 className="mt-1 text-2xl font-bold tracking-tight">Patient messages</h1><p className="mt-1 text-sm text-muted-foreground">Message only patients assigned to your care team. Clinical notes stay in the patient chart.</p></div><div className="grid gap-5 xl:grid-cols-[280px_1fr]"><div className={`${cardClass} divide-y divide-border overflow-hidden`}>{(data?.patients || []).map(item => <button key={item.id} onClick={() => setMessagePatientId(item.id)} className={`flex w-full items-center gap-3 p-4 text-left hover:bg-muted/40 ${messagePatientId === item.id ? 'bg-primary/5' : ''}`}><div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{item.initials}</div><div className="min-w-0"><p className="truncate text-sm font-semibold">{item.name}</p><p className="truncate text-xs text-muted-foreground">{item.email}</p></div></button>)}{!data?.patients.length && <p className="p-5 text-sm text-muted-foreground">No assigned patients found.</p>}</div><MessagesPanel patientId={messagePatientId || data?.patients[0]?.id} /></div></>}
+    {section === 'messages' && <><div><p className="text-xs font-bold uppercase tracking-widest text-primary">Care communication</p><h1 className="mt-1 text-2xl font-bold tracking-tight">Patient messages</h1><p className="mt-1 text-sm text-muted-foreground">Message only patients assigned to your care team. Clinical notes stay in the patient chart.</p></div><div className="grid gap-5 xl:grid-cols-[280px_1fr]"><div className={`${cardClass} divide-y divide-border overflow-hidden`}>{(data?.patients || []).map(item => <button key={item.id} onClick={() => setMessagePatientId(item.id)} className={`flex w-full items-center gap-3 p-4 text-left hover:bg-muted/40 ${messagePatientId === item.id || (!messagePatientId && data?.patients[0]?.id === item.id) ? 'bg-primary/5 font-semibold text-primary' : ''}`}><div className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{item.initials}</div><div className="min-w-0"><p className="truncate text-sm">{item.name}</p><p className="truncate text-xs text-muted-foreground">{item.email}</p></div></button>)}{!data?.patients.length && <p className="p-5 text-sm text-muted-foreground">No assigned patients found.</p>}</div><MessagesPanel patientId={messagePatientId || data?.patients[0]?.id} patientName={(data?.patients || []).find(p => p.id === (messagePatientId || data?.patients[0]?.id))?.name} /></div></>}
   </div></DoctorShell>;
 }
 
