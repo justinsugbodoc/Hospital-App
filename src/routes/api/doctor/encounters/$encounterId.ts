@@ -11,6 +11,7 @@ import {
   recordAudit,
   requireDoctor,
   toAppointment,
+  toIsoString,
   upsertEncounter,
   type AppointmentRow,
   type EncounterRow,
@@ -62,8 +63,8 @@ export const Route = createFileRoute("/api/doctor/encounters/$encounterId")({
               time: a.time,
               status: a.status,
               data: a.data as Record<string, any>,
-              created_at: a.createdAt.toISOString(),
-              updated_at: a.updatedAt.toISOString(),
+              created_at: toIsoString(a.createdAt),
+              updated_at: toIsoString(a.updatedAt),
             };
           }
         }
@@ -105,8 +106,8 @@ export const Route = createFileRoute("/api/doctor/encounters/$encounterId")({
               time: updatedRow.time,
               status: updatedRow.status,
               data: updatedRow.data as Record<string, any>,
-              created_at: updatedRow.createdAt.toISOString(),
-              updated_at: updatedRow.updatedAt.toISOString(),
+              created_at: toIsoString(updatedRow.createdAt),
+              updated_at: toIsoString(updatedRow.updatedAt),
             };
           }
         }

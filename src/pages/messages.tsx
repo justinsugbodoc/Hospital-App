@@ -9,7 +9,7 @@ import {
   type ServerMessage,
   type ServerMessageConversation,
 } from '@/lib/server';
-import { ChevronLeft, MessageSquare, Send, Stethoscope, ShieldAlert, Calendar, CheckCircle2, User } from 'lucide-react';
+import { ChevronLeft, MessageSquare, Send, Stethoscope, Calendar } from 'lucide-react';
 
 const cardClass = 'rounded-2xl border border-border bg-card shadow-sm';
 const formatTime = (value?: string | null) =>
@@ -29,8 +29,22 @@ export default function Messages() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
-  const endOfMessagesRef = useRef<HTMLDivElement>(null);
+
+  // Refs for stable state tracking across intervals & event handlers
+  const activeThreadIdRef = useRef<string | null>(null);
+  activeThreadIdRef.current = activeThreadId;
+
   const hasInitializedUrlRef = useRef(false);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
+  const prevThreadIdRef = useRef<string | null>(null);
+  const prevMessagesCountRef = useRef<number>(0);
+
+  const selectThread = (threadId: string) => {
+    if (activeThreadIdRef.current === threadId) return;
+    activeThreadIdRef.current = threadId;
+    setActiveThreadId(threadId);
+  };
 
   const activeThread = threads.find((thread) => thread.id === activeThreadId) ?? null;
   const isPatient = session?.role === 'Patient';
@@ -90,12 +104,14 @@ export default function Messages() {
     if (showLoading) setLoading(true);
     try {
       const response = await serverMessageConversations();
+      const convs = response.conversations || [];
+
       setThreads((current) => {
-        if (!current.length) return response.conversations;
+        if (!current.length) return convs;
         const isSame =
-          current.length === response.conversations.length &&
+          current.length === convs.length &&
           current.every((t, i) => {
-            const f = response.conversations[i];
+            const f = convs[i];
             return (
               f &&
               t.id === f.id &&
@@ -109,10 +125,10 @@ export default function Messages() {
 
         const currentMap = new Map(current.map((t) => [t.id, t]));
         const updated = current.map((t) => {
-          const fresh = response.conversations.find((c) => c.id === t.id);
+          const fresh = convs.find((c) => c.id === t.id);
           return fresh ? { ...t, ...fresh } : t;
         });
-        for (const fresh of response.conversations) {
+        for (const fresh of convs) {
           if (!currentMap.has(fresh.id)) {
             updated.push(fresh);
           }
@@ -126,29 +142,32 @@ export default function Messages() {
         const threadParam = searchParams.get('thread');
         const doctorParam = searchParams.get('doctor');
 
-        if (threadParam && response.conversations.some((c) => c.id === threadParam)) {
-          setActiveThreadId(threadParam);
+        if (threadParam && convs.some((c) => c.id === threadParam)) {
+          selectThread(threadParam);
         } else if (doctorParam) {
           const normDoc = doctorParam.replace('doctor_', '');
-          const found = response.conversations.find((c) =>
+          const found = convs.find((c) =>
             c.doctorId === normDoc ||
             c.doctorId === `doctor_${normDoc}` ||
             c.id.includes(`_${normDoc}_`)
           );
           if (found) {
-            setActiveThreadId(found.id);
-          } else if (!activeThreadId && response.conversations[0]) {
-            setActiveThreadId(response.conversations[0].id);
+            selectThread(found.id);
+          } else if (convs[0]) {
+            selectThread(convs[0].id);
           }
-        } else if (!activeThreadId && response.conversations[0]) {
-          setActiveThreadId(response.conversations[0].id);
+        } else if (convs[0]) {
+          selectThread(convs[0].id);
         }
 
         if (threadParam || doctorParam) {
           window.history.replaceState({}, '', window.location.pathname);
         }
-      } else if (!activeThreadId && response.conversations[0]) {
-        setActiveThreadId(response.conversations[0].id);
+      } else {
+        // If active thread is unset, safely fallback to first available
+        if (!activeThreadIdRef.current && convs[0]) {
+          selectThread(convs[0].id);
+        }
       }
 
       setError('');
@@ -159,11 +178,29 @@ export default function Messages() {
     }
   };
 
-  const refreshMessages = async (conversationId: string, showLoading = false) => {
-    if (showLoading) setLoadingMessages(true);
+  const refreshMessages = async (conversationId: string, isInitial = false) => {
+    if (isInitial) setLoadingMessages(true);
     try {
       const response = await serverMessages(conversationId);
-      setMessages(response.messages);
+      
+      // Ensure response still corresponds to currently selected thread
+      if (activeThreadIdRef.current !== conversationId) return;
+
+      setMessages((current) => {
+        if (
+          current.length === response.messages.length &&
+          current.every(
+            (m, i) =>
+              m.id === response.messages[i]?.id &&
+              m.body === response.messages[i]?.body &&
+              m.readAt === response.messages[i]?.readAt
+          )
+        ) {
+          return current; // Keep stable reference to prevent unneeded re-renders
+        }
+        return response.messages;
+      });
+
       await serverMarkMessagesRead(conversationId);
       setThreads((current) =>
         current.map((thread) =>
@@ -173,38 +210,88 @@ export default function Messages() {
         ),
       );
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Unable to load this conversation.');
+      if (activeThreadIdRef.current === conversationId) {
+        setError(cause instanceof Error ? cause.message : 'Unable to load this conversation.');
+      }
     } finally {
-      if (showLoading) setLoadingMessages(false);
+      if (isInitial) setLoadingMessages(false);
     }
   };
 
   useEffect(() => {
     void refreshThreads(true);
-    const interval = window.setInterval(() => void refreshThreads(), 5000);
+    const interval = window.setInterval(() => void refreshThreads(false), 6000);
     return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
     if (!activeThreadId) return;
     void refreshMessages(activeThreadId, true);
-    const interval = window.setInterval(() => void refreshMessages(activeThreadId), 5000);
+    const interval = window.setInterval(() => void refreshMessages(activeThreadId, false), 5000);
     return () => window.clearInterval(interval);
   }, [activeThreadId]);
 
+  // Track user scroll position
+  const handleScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const threshold = 80;
+    isAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+  };
+
+  // Controlled scroll handling on thread change or message arrival
   useEffect(() => {
-    endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const isNewThread = prevThreadIdRef.current !== activeThreadId;
+    const hasNewMessages = messages.length > prevMessagesCountRef.current;
+
+    if (isNewThread) {
+      prevThreadIdRef.current = activeThreadId;
+      prevMessagesCountRef.current = messages.length;
+      isAtBottomRef.current = true;
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+        }
+      });
+    } else if (hasNewMessages) {
+      prevMessagesCountRef.current = messages.length;
+      if (isAtBottomRef.current) {
+        requestAnimationFrame(() => {
+          if (messagesContainerRef.current) {
+            messagesContainerRef.current.scrollTo({
+              top: messagesContainerRef.current.scrollHeight,
+              behavior: 'smooth',
+            });
+          }
+        });
+      }
+    }
+  }, [messages, activeThreadId]);
 
   const handleSend = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!inputMsg.trim() || !activeThreadId || sending) return;
+    const threadId = activeThreadIdRef.current;
+    const text = inputMsg.trim();
+    if (!text || !threadId || sending) return;
+
     setSending(true);
     try {
-      const response = await serverSendMessage(activeThreadId, inputMsg.trim());
+      const response = await serverSendMessage(threadId, text);
       setMessages((current) => [...current, response.message]);
       setInputMsg('');
-      await refreshThreads();
+      isAtBottomRef.current = true;
+      requestAnimationFrame(() => {
+        if (messagesContainerRef.current) {
+          messagesContainerRef.current.scrollTo({
+            top: messagesContainerRef.current.scrollHeight,
+            behavior: 'smooth',
+          });
+        }
+      });
+      void refreshThreads(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to send this message.');
     } finally {
@@ -275,7 +362,7 @@ export default function Messages() {
               return (
                 <button
                   key={thread.id}
-                  onClick={() => setActiveThreadId(thread.id)}
+                  onClick={() => selectThread(thread.id)}
                   className={`flex w-full gap-3 border-l-3 p-4 text-left transition hover:bg-muted/40 ${
                     isActive ? 'border-primary bg-primary/5' : 'border-transparent'
                   }`}
@@ -381,14 +468,18 @@ export default function Messages() {
               </div>
 
               {/* Messages list */}
-              <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6">
+              <div
+                ref={messagesContainerRef}
+                onScroll={handleScroll}
+                className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-6"
+              >
                 <div className="my-2 text-center text-xs text-muted-foreground">
                   <span className="rounded-full border border-border bg-card px-3 py-1 shadow-xs">
                     🔒 End-to-end synchronized clinical conversation
                   </span>
                 </div>
 
-                {loadingMessages ? (
+                {loadingMessages && !messages.length ? (
                   <div className="space-y-3">
                     <div className="h-14 w-2/3 animate-pulse rounded-2xl bg-muted" />
                     <div className="ml-auto h-14 w-2/3 animate-pulse rounded-2xl bg-muted" />
@@ -429,7 +520,6 @@ export default function Messages() {
                     </p>
                   </div>
                 )}
-                <div ref={endOfMessagesRef} />
               </div>
 
               {error && (

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { db } from "@/db";
 import { sugbodocAppointments } from "@/db/schema";
 import { errorJson, json, readJson } from "@/lib/api/http.server";
-import { patientSummary, recordAudit, requireDoctor, toAppointment, type AppointmentRow } from "@/lib/api/doctor.server";
+import { patientSummary, recordAudit, requireDoctor, toAppointment, toIsoString, type AppointmentRow } from "@/lib/api/doctor.server";
 
 const bodySchema = z.object({ date: z.string().min(1), time: z.string().min(1), reason: z.string().trim().min(2).max(300) });
 
@@ -57,8 +57,8 @@ export const Route = createFileRoute("/api/doctor/patients/$patientId/follow-ups
           time: row.time,
           status: row.status,
           data: row.data as Record<string, any>,
-          created_at: row.createdAt.toISOString(),
-          updated_at: row.updatedAt.toISOString(),
+          created_at: toIsoString(row.createdAt),
+          updated_at: toIsoString(row.updatedAt),
         };
 
         await recordAudit(doctor.name, "Created patient follow-up appointment", `${patient.name} (${appointment.reference})`);

@@ -445,7 +445,20 @@ function AdminMessages() {
     if (!conversationId) return;
     try {
       const response = await serverMessages(conversationId);
-      setMessages(response.messages);
+      setMessages((current) => {
+        if (
+          current.length === response.messages.length &&
+          current.every(
+            (m, i) =>
+              m.id === response.messages[i]?.id &&
+              m.body === response.messages[i]?.body &&
+              m.readAt === response.messages[i]?.readAt
+          )
+        ) {
+          return current;
+        }
+        return response.messages;
+      });
       await serverMarkMessagesRead(conversationId);
       setThreads(current => current.map(thread => thread.id === conversationId ? { ...thread, unreadCount: 0, lastMessage: response.messages.at(-1) ?? null } : thread));
     } catch (cause) {

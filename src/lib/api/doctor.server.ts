@@ -65,6 +65,16 @@ export type ClinicalRecordRow = {
   updated_at: string;
 };
 
+export function toIsoString(val: unknown): string {
+  if (!val) return new Date().toISOString();
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val === "string") {
+    const d = new Date(val);
+    return isNaN(d.getTime()) ? val : d.toISOString();
+  }
+  return new Date().toISOString();
+}
+
 export async function requireDoctor(request: Request): Promise<{ error: Response } | { user: AuthUser }> {
   const user = await getUserFromRequest(request);
   if (!user) {
@@ -77,24 +87,36 @@ export async function requireDoctor(request: Request): Promise<{ error: Response
 }
 
 export async function assignedAppointments(doctorId: string): Promise<AppointmentRow[]> {
-  const appointmentsData = await db
-    .select()
-    .from(sugbodocAppointments)
-    .orderBy(desc(sugbodocAppointments.date), desc(sugbodocAppointments.time));
+  try {
+    const appointmentsData = await db
+      .select()
+      .from(sugbodocAppointments)
+      .orderBy(desc(sugbodocAppointments.date), desc(sugbodocAppointments.time));
 
-  const rows: AppointmentRow[] = appointmentsData.map((a) => ({
-    id: a.id,
-    user_id: a.userId,
-    reference: a.reference,
-    date: a.date,
-    time: a.time,
-    status: a.status,
-    data: a.data as Record<string, any>,
-    created_at: a.createdAt.toISOString(),
-    updated_at: a.updatedAt.toISOString(),
-  }));
+    const rows: AppointmentRow[] = appointmentsData.map((a) => ({
+      id: a.id,
+      user_id: a.userId,
+      reference: a.reference,
+      date: a.date,
+      time: a.time,
+      status: a.status,
+      data: (a.data && typeof a.data === "object" ? a.data : {}) as Record<string, any>,
+      created_at: toIsoString(a.createdAt),
+      updated_at: toIsoString(a.updatedAt),
+    }));
 
-  return rows.filter((row) => (row.data as Record<string, any>)?.doctor?.id === doctorId);
+    return rows.filter((row) => {
+      const doc = (row.data as Record<string, any>)?.doctor;
+      return doc?.id === doctorId || doc?.providerId === doctorId;
+    });
+  } catch (error) {
+    console.warn("[assignedAppointments] DB query failed, falling back to memory store:", error);
+    const memAppts = Array.from(globalThis._memoryAppointments?.values() || []);
+    return memAppts.filter((row) => {
+      const doc = (row.data as Record<string, any>)?.doctor;
+      return doc?.id === doctorId || doc?.providerId === doctorId;
+    });
+  }
 }
 
 export function toAppointment(row: AppointmentRow, patient?: { name: string; initials: string; email: string }) {
@@ -114,12 +136,16 @@ export function dateKey(date = new Date()) {
 }
 
 export async function recordAudit(actor: string, action: string, target: string) {
-  await db.insert(sugbodocAuditEvents).values({
-    id: `audit_${crypto.randomUUID()}`,
-    actor,
-    action,
-    target,
-  });
+  try {
+    await db.insert(sugbodocAuditEvents).values({
+      id: `audit_${crypto.randomUUID()}`,
+      actor,
+      action,
+      target,
+    });
+  } catch (err) {
+    console.warn("[recordAudit] SQL audit insert skipped:", err);
+  }
 }
 
 const recordTypes = [
@@ -305,59 +331,72 @@ export async function upsertEncounter(patientId: string, raw: unknown): Promise<
 }
 
 export async function loadPatientEncounters(patientId: string) {
-  const encounterRows = await db
-    .select()
-    .from(sugbodocEncounters)
-    .where(eq(sugbodocEncounters.patientId, patientId))
-    .orderBy(desc(sugbodocEncounters.encounterDate), desc(sugbodocEncounters.createdAt));
+  try {
+    const encounterRows = await db
+      .select()
+      .from(sugbodocEncounters)
+      .where(eq(sugbodocEncounters.patientId, patientId))
+      .orderBy(desc(sugbodocEncounters.encounterDate), desc(sugbodocEncounters.createdAt));
 
-  const recordRows = await db
-    .select()
-    .from(sugbodocClinicalRecords)
-    .where(eq(sugbodocClinicalRecords.patientId, patientId))
-    .orderBy(asc(sugbodocClinicalRecords.createdAt));
+    const recordRows = await db
+      .select()
+      .from(sugbodocClinicalRecords)
+      .where(eq(sugbodocClinicalRecords.patientId, patientId))
+      .orderBy(asc(sugbodocClinicalRecords.createdAt));
 
-  const records: ClinicalRecordRow[] = recordRows.map((r) => ({
-    id: r.id,
-    patient_id: r.patientId,
-    encounter_id: r.encounterId,
-    appointment_id: r.appointmentId,
-    record_type: r.recordType,
-    data: r.data as Record<string, unknown>,
-    created_at: r.createdAt.toISOString(),
-    updated_at: r.updatedAt.toISOString(),
-  }));
+    const records: ClinicalRecordRow[] = recordRows.map((r) => ({
+      id: r.id,
+      patient_id: r.patientId,
+      encounter_id: r.encounterId,
+      appointment_id: r.appointmentId,
+      record_type: r.recordType,
+      data: (r.data && typeof r.data === "object" ? r.data : {}) as Record<string, unknown>,
+      created_at: toIsoString(r.createdAt),
+      updated_at: toIsoString(r.updatedAt),
+    }));
 
-  const byEncounter = new Map<string, ClinicalRecordRow[]>();
-  for (const record of records) {
-    const current = byEncounter.get(record.encounter_id) ?? [];
-    current.push(record);
-    byEncounter.set(record.encounter_id, current);
-  }
-
-  return encounterRows.map((row) => {
-    const grouped: Record<string, unknown> = {
-      soapNotes: [], diagnoses: [], prescriptions: [], medications: [], pharmacyOrders: [],
-      vitals: [], laboratoryResults: [], imaging: [], bills: [], payments: [], claims: [],
-      insurance: null, billing: {},
-    };
-    for (const record of byEncounter.get(row.id) ?? []) {
-      if (record.record_type === "insurance" || record.record_type === "billing") {
-        grouped[record.record_type] = record.data;
-      } else if (isRecordType(record.record_type)) {
-        (grouped[record.record_type] as unknown[]).push(record.data);
-      }
+    const byEncounter = new Map<string, ClinicalRecordRow[]>();
+    for (const record of records) {
+      const current = byEncounter.get(record.encounter_id) ?? [];
+      current.push(record);
+      byEncounter.set(record.encounter_id, current);
     }
-    return {
-      ...(row.data as Record<string, unknown>),
-      ...grouped,
-      id: row.id,
-      patientId: row.patientId,
-      appointmentId: row.appointmentId,
-      encounterReference: row.reference,
-      encounterDate: row.encounterDate,
-    } as Record<string, any>;
-  });
+
+    return encounterRows.map((row) => {
+      const grouped: Record<string, unknown> = {
+        soapNotes: [], diagnoses: [], prescriptions: [], medications: [], pharmacyOrders: [],
+        vitals: [], laboratoryResults: [], imaging: [], bills: [], payments: [], claims: [],
+        insurance: null, billing: {},
+      };
+      for (const record of byEncounter.get(row.id) ?? []) {
+        if (record.record_type === "insurance" || record.record_type === "billing") {
+          grouped[record.record_type] = record.data;
+        } else if (isRecordType(record.record_type)) {
+          (grouped[record.record_type] as unknown[]).push(record.data);
+        }
+      }
+      return {
+        ...(row.data as Record<string, unknown>),
+        ...grouped,
+        id: row.id,
+        patientId: row.patientId,
+        appointmentId: row.appointmentId,
+        encounterReference: row.reference,
+        encounterDate: row.encounterDate,
+      } as Record<string, any>;
+    });
+  } catch (error) {
+    console.warn("[loadPatientEncounters] Failed to query encounters, using memory store:", error);
+    const memEncounters = Array.from(globalThis._memoryEncounters?.values() || []).filter((e) => e.patient_id === patientId);
+    return memEncounters.map((e) => ({
+      id: e.id,
+      patientId: e.patient_id,
+      appointmentId: e.appointment_id,
+      encounterReference: e.reference,
+      encounterDate: e.encounter_date,
+      ...(e.data || {}),
+    }));
+  }
 }
 
 export async function deleteEncounterClinicalRecords(encounterId: string) {
@@ -503,30 +542,60 @@ export async function ensureCompletedAppointmentBill(
 }
 
 export async function patientSummary(patientId: string, doctorId: string) {
-  const patientRows = await db
-    .select()
-    .from(sugbodocUsers)
-    .where(and(eq(sugbodocUsers.id, patientId), eq(sugbodocUsers.role, "Patient")))
-    .limit(1);
+  let patient: PatientRow | null = null;
+  try {
+    const patientRows = await db
+      .select()
+      .from(sugbodocUsers)
+      .where(and(eq(sugbodocUsers.id, patientId), eq(sugbodocUsers.role, "Patient")))
+      .limit(1);
 
-  const p = patientRows[0];
-  if (!p || !(await doctorCanAccessPatient({ role: "Doctor", providerId: doctorId } as AuthUser, patientId))) return null;
+    const p = patientRows[0];
+    if (p) {
+      patient = {
+        id: p.id,
+        name: p.name,
+        initials: p.initials,
+        email: p.email,
+        phone: p.phone,
+        birthday: p.birthday,
+        gender: p.gender,
+        blood_type: p.bloodType,
+        emergency_contact: p.emergencyContact as { name: string; number: string } | null,
+        allergies: (p.allergies as string[]) || [],
+        insurance_data: p.insuranceData as Record<string, unknown> | null,
+        claims_data: (p.claimsData as Record<string, unknown>[]) || [],
+        role: p.role,
+      };
+    }
+  } catch (err) {
+    console.warn("[patientSummary] DB error, trying memory store:", err);
+  }
 
-  const patient: PatientRow = {
-    id: p.id,
-    name: p.name,
-    initials: p.initials,
-    email: p.email,
-    phone: p.phone,
-    birthday: p.birthday,
-    gender: p.gender,
-    blood_type: p.bloodType,
-    emergency_contact: p.emergencyContact as { name: string; number: string } | null,
-    allergies: p.allergies as string[] | null,
-    insurance_data: p.insuranceData as Record<string, unknown> | null,
-    claims_data: p.claimsData as Record<string, unknown>[] | null,
-    role: p.role,
-  };
+  if (!patient) {
+    const memUser = globalThis._memoryUsers?.get(patientId);
+    if (memUser && memUser.role === "Patient") {
+      patient = {
+        id: memUser.id,
+        name: memUser.name,
+        initials: memUser.initials,
+        email: memUser.email,
+        phone: memUser.phone,
+        birthday: memUser.birthday,
+        gender: memUser.gender,
+        blood_type: memUser.blood_type,
+        emergency_contact: memUser.emergency_contact,
+        allergies: memUser.allergies || [],
+        insurance_data: memUser.insurance_data,
+        claims_data: memUser.claims_data || [],
+        role: memUser.role,
+      };
+    }
+  }
+
+  if (!patient || !(await doctorCanAccessPatient({ role: "Doctor", providerId: doctorId } as AuthUser, patientId))) {
+    return null;
+  }
 
   const appointments = (await assignedAppointments(doctorId)).filter((row) => row.user_id === patientId);
   const encounters = await loadPatientEncounters(patientId);
@@ -542,7 +611,7 @@ export async function patientSummary(patientId: string, doctorId: string) {
     allergies: patient.allergies ?? [],
     emergencyContact: patient.emergency_contact,
     insurance: patient.insurance_data,
-    appointments: appointments.map((row) => toAppointment(row, { name: patient.name, initials: patient.initials, email: patient.email })),
+    appointments: appointments.map((row) => toAppointment(row, { name: patient!.name, initials: patient!.initials, email: patient!.email })),
     encounters,
   };
 }
